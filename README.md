@@ -1,0 +1,54 @@
+# B2B Quotation System - Backend API
+
+FastAPI backend for B2B Quotation Management System.
+
+## Tech Stack
+- FastAPI
+- SQLAlchemy 2.0
+- PostgreSQL
+- Alembic (migrations)
+- Pydantic 2.x
+
+## Quick Start
+
+### Local Development
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run server
+uvicorn app.main:app --reload
+```
+
+### API Documentation
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+CORS_ORIGINS=["http://localhost:5173"]
+```
+
+## API Endpoints
+
+### Customer Module
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/v1/customers | List all customers |
+| POST | /api/v1/customers | Create customer |
+| GET | /api/v1/customers/{id} | Get customer by ID |
+| PUT | /api/v1/customers/{id} | Update customer |
+| DELETE | /api/v1/customers/{id} | Delete customer |
+
+## Deployment
+
+This project is configured for Railway deployment.
+See `railway.toml` for configuration.
