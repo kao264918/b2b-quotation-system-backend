@@ -52,3 +52,14 @@ CORS_ORIGINS=["http://localhost:5173"]
 
 This project is configured for Railway deployment.
 See `railway.toml` for configuration.
+
+## Architecture & Contracts
+
+This backend implementation follows the system architecture
+and domain contracts defined in the frontend repository:
+
+👉 https://github.com/your-org/B2B-Quotation-System
+
+Do NOT modify domain contracts in this repository.
+If backend requirements conflict with frontend contracts,
+raise a decision question instead.
