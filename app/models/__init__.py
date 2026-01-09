@@ -1,5 +1,5 @@
 # Master Data
-from .customer import Customer, CustomerContact
+from .customer import Customer
 from .vendor import Vendor, VendorContact
 from .catalog import CatalogItem
 from .tax_category import TaxCategory

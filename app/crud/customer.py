@@ -1,28 +1,34 @@
-from typing import List, Any
+from typing import List
 from sqlalchemy.orm import Session
 from app.crud.base import CRUDBase
-from app.models.customer import Customer, CustomerContact
+from app.models.customer import Customer
 from app.schemas.customer import CustomerCreate, CustomerUpdate
 
+
 class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
-    def create(self, db: Session, *, obj_in: CustomerCreate) -> Customer:
-        # Separate contacts from customer data
-        obj_data = obj_in.model_dump()
-        contacts_data = obj_data.pop("contacts", [])
-        
-        db_obj = Customer(**obj_data)
-        db.add(db_obj)
-        db.flush() # Generate ID for customer
-        
-        for contact in contacts_data:
-            db_contact = CustomerContact(
-                **contact,
-                customer_id=db_obj.id
-            )
-            db.add(db_contact)
-            
-        db.commit()
-        db.refresh(db_obj)
-        return db_obj
+    """CRUD operations for Customer with spec-compliant behaviors"""
+
+    def get_multi_active(
+        self, db: Session, skip: int = 0, limit: int = 100
+    ) -> List[Customer]:
+        """Get only active customers (default list behavior per spec)"""
+        return (
+            db.query(self.model)
+            .filter(self.model.status == "active")
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def soft_delete(self, db: Session, *, id: str) -> Customer:
+        """Soft delete: set status to inactive instead of hard delete"""
+        obj = db.query(self.model).filter(self.model.id == id).first()
+        if obj:
+            obj.status = "inactive"
+            db.add(obj)
+            db.commit()
+            db.refresh(obj)
+        return obj
+
 
 customer = CRUDCustomer(Customer)

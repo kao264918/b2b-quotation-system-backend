@@ -1,4 +1,4 @@
-from .customer import Customer, CustomerCreate, CustomerUpdate, CustomerContactBase
+from .customer import Customer, CustomerCreate, CustomerUpdate
 from .vendor import Vendor, VendorCreate, VendorUpdate, VendorContactBase
 from .catalog import CatalogItem, CatalogItemCreate, CatalogItemUpdate
 from .tax_category import TaxCategory, TaxCategoryCreate, TaxCategoryUpdate
