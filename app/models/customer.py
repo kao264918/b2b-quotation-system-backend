@@ -20,6 +20,7 @@ class Customer(Base):
 
     # Company Information
     company_name: Mapped[str] = mapped_column(String, nullable=False)
+    company_email: Mapped[str | None] = mapped_column(String, nullable=True)
     tax_id: Mapped[str | None] = mapped_column(String, nullable=True)
     industry: Mapped[str | None] = mapped_column(String, nullable=True)
     website: Mapped[str | None] = mapped_column(String, nullable=True)

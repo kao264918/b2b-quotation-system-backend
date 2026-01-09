@@ -7,6 +7,7 @@ class CustomerBase(BaseModel):
     """Base schema with all Customer fields per CUSTOMER_FIELD_SPEC.md"""
     # Company Information
     company_name: str
+    company_email: Optional[str] = None
     tax_id: Optional[str] = None
     industry: Optional[str] = None
     website: Optional[str] = None
@@ -39,6 +40,7 @@ class CustomerCreate(CustomerBase):
 class CustomerUpdate(BaseModel):
     """Schema for updating a Customer - all fields optional for partial update"""
     company_name: Optional[str] = None
+    company_email: Optional[str] = None
     tax_id: Optional[str] = None
     industry: Optional[str] = None
     website: Optional[str] = None
@@ -67,3 +69,11 @@ class Customer(CustomerBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerListResponse(BaseModel):
+    """Schema for paginated customer list response"""
+    items: list[Customer]
+    total: int
+    page: int
+    page_size: int

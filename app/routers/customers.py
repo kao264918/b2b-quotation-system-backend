@@ -8,23 +8,35 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/", response_model=List[schemas.Customer])
+@router.get("/", response_model=schemas.CustomerListResponse)
 def read_customers(
     db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
+    page: int = 1,
+    page_size: int = 100,
     include_inactive: bool = False
 ) -> Any:
     """
-    List customers.
-    By default, only returns active customers per CUSTOMER_FIELD_SPEC.md.
-    Use include_inactive=true to get all customers (admin use).
+    List customers with server-side pagination.
     """
+    skip = (page - 1) * page_size
+    limit = page_size
+
     if include_inactive:
-        customers = crud.customer.get_multi(db, skip=skip, limit=limit)
+        # Note: Pagination for 'all' customers (including inactive) not strictly required but good to have.
+        # MVP focus: active customers.
+        items = crud.customer.get_multi(db, skip=skip, limit=limit)
+        total = db.query(crud.customer.model).count() # Simple count for now
     else:
-        customers = crud.customer.get_multi_active(db, skip=skip, limit=limit)
-    return customers
+        items = crud.customer.get_multi_active(db, skip=skip, limit=limit)
+        total = crud.customer.count_active(db)
+
+    return schemas.CustomerListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+
 
 
 @router.post("/", response_model=schemas.Customer)
@@ -34,6 +46,13 @@ def create_customer(
     customer_in: schemas.CustomerCreate
 ) -> Any:
     """Create a new customer. Status defaults to 'active'."""
+    # Check for duplicate company_name
+    existing = crud.customer.get_by_company_name(db, company_name=customer_in.company_name)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Company name already exists"
+        )
     customer = crud.customer.create(db, obj_in=customer_in)
     return customer
 
@@ -62,6 +81,14 @@ def update_customer(
     customer = crud.customer.get(db, id=id)
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    # Check for duplicate company_name if it's being changed
+    if customer_in.company_name and customer_in.company_name != customer.company_name:
+        existing = crud.customer.get_by_company_name(db, company_name=customer_in.company_name)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail="Company name already exists"
+            )
     customer = crud.customer.update(db, db_obj=customer, obj_in=customer_in)
     return customer
 

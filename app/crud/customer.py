@@ -20,6 +20,14 @@ class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
             .all()
         )
 
+    def count_active(self, db: Session) -> int:
+        """Count active customers for pagination"""
+        return db.query(self.model).filter(self.model.status == "active").count()
+
+    def get_by_company_name(self, db: Session, *, company_name: str) -> Customer | None:
+        """Get customer by company_name for duplicate checking"""
+        return db.query(self.model).filter(self.model.company_name == company_name).first()
+
     def soft_delete(self, db: Session, *, id: str) -> Customer:
         """Soft delete: set status to inactive instead of hard delete"""
         obj = db.query(self.model).filter(self.model.id == id).first()
