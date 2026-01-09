@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",           # Vite dev
+        "http://localhost:5174",           # Vite dev (alternate port)
         "http://localhost:3000",           # Alternative dev
         "https://*.vercel.app",            # Vercel previews
     ]
