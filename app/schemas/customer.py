@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, EmailStr
 
 
@@ -73,7 +73,9 @@ class Customer(CustomerBase):
 
 class CustomerListResponse(BaseModel):
     """Schema for paginated customer list response"""
-    items: list[Customer]
+    items: List["Customer"]
     total: int
     page: int
     page_size: int
+
+    model_config = ConfigDict(from_attributes=True)
