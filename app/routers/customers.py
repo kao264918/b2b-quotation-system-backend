@@ -57,6 +57,22 @@ def create_customer(
     return customer
 
 
+@router.get("/check-name")
+def check_company_name(
+    company_name: str,
+    exclude_id: str = None,
+    db: Session = Depends(get_db)
+) -> Any:
+    """
+    Check if a company name already exists.
+    Used for real-time validation on frontend blur event.
+    """
+    existing = crud.customer.get_by_company_name(db, company_name=company_name)
+    if existing and (exclude_id is None or existing.id != exclude_id):
+        return {"exists": True, "customer_id": existing.id}
+    return {"exists": False}
+
+
 @router.get("/{id}", response_model=schemas.Customer)
 def read_customer(
     *,
