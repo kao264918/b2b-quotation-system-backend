@@ -13,20 +13,23 @@ def read_customers(
     db: Session = Depends(get_db),
     page: int = 1,
     page_size: int = 100,
-    include_inactive: bool = False
+    status: str = None  # 'active', 'inactive', or None for all
 ) -> Any:
     """
     List customers with server-side pagination.
+    Use status='active' or status='inactive' to filter.
     """
     skip = (page - 1) * page_size
     limit = page_size
 
-    if include_inactive:
-        # Note: Pagination for 'all' customers (including inactive) not strictly required but good to have.
-        # MVP focus: active customers.
-        items = crud.customer.get_multi(db, skip=skip, limit=limit)
-        total = db.query(crud.customer.model).count() # Simple count for now
+    if status == "inactive":
+        items = crud.customer.get_multi_inactive(db, skip=skip, limit=limit)
+        total = crud.customer.count_inactive(db)
+    elif status == "active":
+        items = crud.customer.get_multi_active(db, skip=skip, limit=limit)
+        total = crud.customer.count_active(db)
     else:
+        # Default: active only (backward compatible)
         items = crud.customer.get_multi_active(db, skip=skip, limit=limit)
         total = crud.customer.count_active(db)
 
