@@ -12,12 +12,12 @@ class CustomerBase(BaseModel):
     industry: Optional[str] = None
     website: Optional[str] = None
 
-    # Address Information (required: address_line1, city, country)
-    address_line1: str
+    # Address Information (all optional)
+    address_line1: Optional[str] = None
     address_line2: Optional[str] = None
-    city: str
+    city: Optional[str] = None
     postal_code: Optional[str] = None
-    country: str
+    country: Optional[str] = None
 
     # Primary Contact (required: contact_name, contact_email)
     contact_name: str

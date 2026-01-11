@@ -45,10 +45,10 @@ class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
         return db.query(self.model).filter(self.model.company_name == company_name).first()
 
     def soft_delete(self, db: Session, *, id: str) -> Customer:
-        """Soft delete: set status to inactive instead of hard delete"""
+        """Soft delete: set status to 'deleted' (invisible in frontend)"""
         obj = db.query(self.model).filter(self.model.id == id).first()
         if obj:
-            obj.status = "inactive"
+            obj.status = "deleted"
             db.add(obj)
             db.commit()
             db.refresh(obj)
