@@ -1,11 +1,6 @@
 from datetime import datetime
-<<<<<<< Updated upstream
-from typing import Optional
-from pydantic import BaseModel, ConfigDict, EmailStr
-=======
 from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
->>>>>>> Stashed changes
 
 
 class CustomerBase(BaseModel):
@@ -17,10 +12,6 @@ class CustomerBase(BaseModel):
     industry: Optional[str] = None
     website: Optional[str] = None
 
-<<<<<<< Updated upstream
-    # Address Information (required: address_line1, city, country)
-    address_line1: str
-=======
     @field_validator('tax_id')
     @classmethod
     def validate_tax_id(cls, v: str) -> str:
@@ -30,11 +21,10 @@ class CustomerBase(BaseModel):
 
     # Address Information (all optional)
     address_line1: Optional[str] = None
->>>>>>> Stashed changes
     address_line2: Optional[str] = None
-    city: str
+    city: Optional[str] = None
     postal_code: Optional[str] = None
-    country: str
+    country: Optional[str] = None
 
     # Primary Contact (required: contact_name, contact_email)
     contact_name: str
