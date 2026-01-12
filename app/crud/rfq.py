@@ -2,7 +2,12 @@ from typing import Any, Dict, Union
 from sqlalchemy.orm import Session
 from app.crud.base import CRUDBase
 from app.models.rfq import RFQ, RFQItem
-from app.schemas.rfq import RFQCreate, RFQUpdate
+from app.schemas.rfq import RFQCreate, RFQUpdate, RFQItemCreateFromCatalog, RFQItemUpdate
+from app.services.catalog_to_rfq_snapshot import (
+    create_rfq_item_from_catalog,
+    update_rfq_item_with_recalculation
+)
+from app import crud as app_crud
 
 class CRUDRFQ(CRUDBase[RFQ, RFQCreate, RFQUpdate]):
     def create(self, db: Session, *, obj_in: RFQCreate) -> RFQ:
@@ -52,5 +57,53 @@ class CRUDRFQ(CRUDBase[RFQ, RFQCreate, RFQUpdate]):
             pass 
             
         return db_obj
+    
+    def create_item_from_catalog(
+        self,
+        db: Session,
+        *,
+        rfq_id: str,
+        item_in: RFQItemCreateFromCatalog
+    ) -> RFQItem:
+        """
+        Create RFQ Item from Catalog Item (snapshot)
+        
+        Raises:
+            ValueError: If catalog item not found or validation fails
+        """
+        # Get catalog item
+        catalog_item = app_crud.catalog.get(db, id=item_in.catalog_item_id)
+        if not catalog_item:
+            raise ValueError(f"Catalog item {item_in.catalog_item_id} not found")
+        
+        # Create snapshot
+        return create_rfq_item_from_catalog(
+            db,
+            rfq_id=rfq_id,
+            catalog_item=catalog_item,
+            quantity=item_in.quantity,
+            length_cm=item_in.length_cm,
+            width_cm=item_in.width_cm,
+            unit_price_override=item_in.unit_price_override,
+            description_override=item_in.description_override
+        )
+    
+    def update_item_with_recalculation(
+        self,
+        db: Session,
+        *,
+        db_obj: RFQItem,
+        obj_in: RFQItemUpdate
+    ) -> RFQItem:
+        """
+        Update RFQ Item with automatic area_unit recalculation
+        """
+        update_data = obj_in.model_dump(exclude_unset=True)
+        return update_rfq_item_with_recalculation(
+            db,
+            db_obj=db_obj,
+            update_data=update_data
+        )
 
 rfq = CRUDRFQ(RFQ)
+
