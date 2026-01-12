@@ -12,3 +12,7 @@ from .vendor_quote import VendorQuote
 # Snapshot
 from .quote import Quote, QuoteItem
 from .invoice import Invoice, InvoiceItem
+
+# System
+from .audit_log import AuditLog
+

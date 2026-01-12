@@ -7,3 +7,5 @@ from .rfq import rfq
 from .vendor_quote import vendor_quote
 from .quote import quote
 from .invoice import invoice
+from . import audit_log
+
