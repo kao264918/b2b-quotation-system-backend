@@ -50,10 +50,11 @@ class CatalogItemUpdate(BaseModel):
 # ===== Response Schemas =====
 
 class CatalogItem(CatalogItemBase):
-    """Public response schema - includes item_no"""
+    """Public response schema - includes item_no and reference_cost"""
     id: str
     item_no: str
     type: Literal["product", "service", "output"]
+    reference_cost: Decimal
     created_at: datetime
     updated_at: datetime
     
