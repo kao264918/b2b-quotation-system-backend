@@ -30,6 +30,22 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('label')
     )
+    
+    # Seed default units
+    import uuid
+    units_table = sa.table(
+        'units',
+        sa.column('id', sa.String),
+        sa.column('label', sa.String),
+        sa.column('status', sa.String),
+    )
+    op.bulk_insert(units_table, [
+        {'id': str(uuid.uuid4()), 'label': 'pcs', 'status': 'active'},
+        {'id': str(uuid.uuid4()), 'label': '材', 'status': 'active'},
+        {'id': str(uuid.uuid4()), 'label': 'kg', 'status': 'active'},
+        {'id': str(uuid.uuid4()), 'label': 'set', 'status': 'active'},
+        {'id': str(uuid.uuid4()), 'label': 'day', 'status': 'active'},
+    ])
 
 
 def downgrade() -> None:
