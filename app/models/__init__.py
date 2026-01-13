@@ -4,6 +4,7 @@ from .vendor import Vendor, VendorContact
 from .catalog import CatalogItem
 from .tax_category import TaxCategory
 from .template import QuoteTemplate, InvoiceTemplate
+from .unit import Unit
 
 # Transaction
 from .rfq import RFQ, RFQItem
