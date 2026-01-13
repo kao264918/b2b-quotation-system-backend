@@ -13,7 +13,6 @@ class CatalogItem(Base):
     __tablename__ = "catalog_items"
     
     __table_args__ = (
-        UniqueConstraint('name', name='uq_catalog_item_name'),
         UniqueConstraint('item_no', name='uq_catalog_item_item_no'),
         Index('ix_catalog_items_status', 'status'),
         Index('ix_catalog_items_type', 'type'),
@@ -25,7 +24,7 @@ class CatalogItem(Base):
     item_no: Mapped[str] = mapped_column(String, nullable=False, unique=True)  # ERP-style: P-0001, S-0001, O-0001
     
     # Required Fields
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=False)
     type: Mapped[str] = mapped_column(String, nullable=False)  # 'product' | 'service' | 'output'
     unit: Mapped[str] = mapped_column(String, nullable=False)
     reference_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)  # 🔒 Internal Only
