@@ -32,6 +32,9 @@ def upgrade() -> None:
     if 'company_email' not in columns:
         op.add_column('customers', sa.Column('company_email', sa.String(), nullable=True))
         
+    # Ensure no null tax_ids exist before making it non-nullable
+    op.execute("UPDATE customers SET tax_id = '' WHERE tax_id IS NULL")
+    
     op.alter_column('customers', 'tax_id',
                existing_type=sa.VARCHAR(),
                nullable=False)
