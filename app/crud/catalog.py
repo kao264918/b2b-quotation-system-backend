@@ -22,9 +22,9 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
 
     def generate_item_no(self, db: Session, item_type: str) -> str:
         """
-        Generate ERP-style item number with concurrent safety.
-        Format: P-0001, S-0001, O-0001
-        Automatically expands beyond 4 digits when needed.
+        Generate ERP-style item number with global sequence.
+        Format: P-0001, S-0002, O-0003
+        The numeric part increments globally regardless of type.
         """
         # Map type to prefix
         prefix_map = {
@@ -35,24 +35,27 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
         prefix = prefix_map.get(item_type, "P")
 
         # Use database-level lock to ensure concurrent safety
-        # Query max item_no for this type WITH LOCK
-        max_item = (
-            db.query(CatalogItem)
-            .filter(CatalogItem.item_no.like(f"{prefix}-%"))
+        # Query ALL item_nos to find the global maximum number
+        # Note: For massive scale, this should be replaced by a Sequence or dedicated counter table.
+        all_items = (
+            db.query(CatalogItem.item_no)
             .with_for_update()  # Database row lock
-            .order_by(CatalogItem.item_no.desc())
-            .first()
+            .all()
         )
 
-        if max_item:
-            # Extract number from format "P-0001"
+        max_num = 0
+        for (item_no,) in all_items:
             try:
-                last_num = int(max_item.item_no.split("-")[1])
-                next_num = last_num + 1
+                # Expected format: "PREFIX-NUMBER" (e.g., P-0001)
+                parts = item_no.split("-")
+                if len(parts) == 2:
+                    num = int(parts[1])
+                    if num > max_num:
+                        max_num = num
             except (IndexError, ValueError):
-                next_num = 1
-        else:
-            next_num = 1
+                continue
+
+        next_num = max_num + 1
 
         # Format with minimum 4 digits, auto-expand if needed
         num_str = str(next_num).zfill(max(4, len(str(next_num))))
