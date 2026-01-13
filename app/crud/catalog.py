@@ -61,9 +61,14 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
     def get_by_name(self, db: Session, *, name: str, exclude_id: Optional[str] = None) -> Optional[CatalogItem]:
         """
         Get catalog item by name for uniqueness validation.
-        Checks across active, inactive, AND deleted items.
+        Checks ONLY against ACTIVE (non-deleted) items.
+        Inactive and Deleted items are ignored.
         """
-        query = db.query(self.model).filter(self.model.name == name)
+        query = db.query(self.model).filter(
+            self.model.name == name,
+            self.model.status == "active",
+            self.model.deleted_at.is_(None)
+        )
         if exclude_id:
             query = query.filter(self.model.id != exclude_id)
         return query.first()
@@ -159,10 +164,15 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
         return obj
 
     def reactivate(self, db: Session, *, id: str) -> CatalogItem:
-        """Set catalog item status back to active"""
+        """Set catalog item status back to active. Checks for name duplication."""
         obj = db.query(self.model).filter(self.model.id == id).first()
         if not obj:
             return None
+            
+        # Check if another active item with same name exists
+        existing = self.get_by_name(db, name=obj.name, exclude_id=obj.id)
+        if existing:
+            raise ValueError(f"Cannot reactivate: Active item with name '{obj.name}' already exists")
         
         obj.status = "active"
         db.add(obj)

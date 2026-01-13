@@ -163,7 +163,11 @@ def reactivate_catalog_item(
     Reactivate an inactive catalog item.
     Sets status back to active.
     """
-    item = crud.catalog.reactivate(db, id=id)
+    try:
+        item = crud.catalog.reactivate(db, id=id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+        
     if not item:
         raise HTTPException(status_code=404, detail="Catalog Item not found")
     
@@ -172,8 +176,6 @@ def reactivate_catalog_item(
         db,
         entity_type="catalog_item",
         entity_id=item.id,
-        entity_name=item.name,  # Pass name if possible? Add entity_name to log_action later? Model doesn't support yet.
-        # Original log_action just takes entity_id.
         action="reactivate"
     )
     
