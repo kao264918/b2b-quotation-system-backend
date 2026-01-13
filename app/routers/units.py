@@ -8,7 +8,7 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/", response_model=List[schemas.Unit])
+@router.get("", response_model=List[schemas.Unit])
 def read_units(
     db: Session = Depends(get_db),
     status: Optional[str] = Query(None, description="Filter by status: active or inactive"),
@@ -23,7 +23,7 @@ def read_units(
     return crud.unit.get_all(db, status=status, skip=skip, limit=limit)
 
 
-@router.post("/", response_model=schemas.Unit, status_code=201)
+@router.post("", response_model=schemas.Unit, status_code=201)
 def create_unit(
     *,
     db: Session = Depends(get_db),
