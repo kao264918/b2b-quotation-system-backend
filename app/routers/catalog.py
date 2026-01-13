@@ -153,6 +153,32 @@ def inactivate_catalog_item(
     return item
 
 
+@router.post("/{id}/reactivate", response_model=schemas.CatalogItem)
+def reactivate_catalog_item(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+) -> Any:
+    """
+    Reactivate an inactive catalog item.
+    Sets status back to active.
+    """
+    item = crud.catalog.reactivate(db, id=id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Catalog Item not found")
+    
+    # Audit log (audit log needs item id, which we have from result)
+    crud.audit_log.log_action(
+        db,
+        entity_type="catalog_item",
+        entity_id=item.id,
+        entity_name=item.name,  # Pass name if possible? Add entity_name to log_action later? Model doesn't support yet.
+        # Original log_action just takes entity_id.
+        action="reactivate"
+    )
+    
+    return item
+
 @router.delete("/{id}", response_model=schemas.CatalogItem)
 def delete_catalog_item(
     *,
