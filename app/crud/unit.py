@@ -55,5 +55,24 @@ class CRUDUnit(CRUDBase[Unit, UnitCreate, UnitUpdate]):
             query = query.filter(Unit.id != exclude_id)
         return query.first() is not None
 
+    def reactivate(self, db: Session, *, id: str) -> Optional[Unit]:
+        """Reactivate: set status to active and clear deleted_at."""
+        db_obj = self.get(db, id=id)
+        if db_obj:
+            db_obj.status = "active"
+            db_obj.deleted_at = None
+            db.add(db_obj)
+            db.commit()
+            db.refresh(db_obj)
+        return db_obj
+
+    def get_inactive_by_label(self, db: Session, *, label: str) -> Optional[Unit]:
+        """Get inactive unit by label (for reactivation)."""
+        return (
+            db.query(Unit)
+            .filter(Unit.label.ilike(label), Unit.status == "inactive")
+            .first()
+        )
+
 
 unit = CRUDUnit(Unit)

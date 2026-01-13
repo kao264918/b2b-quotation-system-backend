@@ -97,3 +97,32 @@ def inactivate_unit(
         raise HTTPException(status_code=400, detail="Unit is already inactive")
     
     return crud.unit.inactivate(db, id=id)
+
+
+@router.post("/{id}/reactivate", response_model=schemas.Unit)
+def reactivate_unit(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+) -> Any:
+    """
+    Reactivate an inactive unit.
+    Sets status back to active and clears deleted_at.
+    """
+    unit = crud.unit.reactivate(db, id=id)
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+    
+    return unit
+
+
+@router.get("/search/inactive", response_model=List[schemas.Unit])
+def search_inactive_units(
+    db: Session = Depends(get_db),
+    label: str = Query(..., description="Search label")
+) -> Any:
+    """
+    Search inactive units by label (for reactivation suggestions).
+    """
+    return crud.unit.get_all(db, status="inactive")
+

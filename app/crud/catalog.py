@@ -158,6 +158,18 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
         db.refresh(obj)
         return obj
 
+    def reactivate(self, db: Session, *, id: str) -> CatalogItem:
+        """Set catalog item status back to active"""
+        obj = db.query(self.model).filter(self.model.id == id).first()
+        if not obj:
+            return None
+        
+        obj.status = "active"
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+        return obj
+
     def soft_delete(self, db: Session, *, id: str) -> CatalogItem:
         """Soft delete: set deleted_at timestamp"""
         obj = db.query(self.model).filter(self.model.id == id).first()
