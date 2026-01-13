@@ -9,7 +9,7 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/", response_model=schemas.CatalogItemListResponse)
+@router.get("", response_model=schemas.CatalogItemListResponse)
 def read_catalog_items(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -49,7 +49,7 @@ def read_catalog_items(
     )
 
 
-@router.post("/", response_model=schemas.CatalogItem, status_code=201)
+@router.post("", response_model=schemas.CatalogItem, status_code=201)
 def create_catalog_item(
     *,
     db: Session = Depends(get_db),
