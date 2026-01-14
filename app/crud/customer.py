@@ -24,15 +24,31 @@ class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
         """Count active customers for pagination"""
         return db.query(self.model).filter(self.model.status == "active").count()
 
+    def get_multi_inactive(
+        self, db: Session, skip: int = 0, limit: int = 100
+    ) -> List[Customer]:
+        """Get only inactive customers"""
+        return (
+            db.query(self.model)
+            .filter(self.model.status == "inactive")
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def count_inactive(self, db: Session) -> int:
+        """Count inactive customers for pagination"""
+        return db.query(self.model).filter(self.model.status == "inactive").count()
+
     def get_by_company_name(self, db: Session, *, company_name: str) -> Customer | None:
         """Get customer by company_name for duplicate checking"""
         return db.query(self.model).filter(self.model.company_name == company_name).first()
 
     def soft_delete(self, db: Session, *, id: str) -> Customer:
-        """Soft delete: set status to inactive instead of hard delete"""
+        """Soft delete: set status to 'deleted' (invisible in frontend)"""
         obj = db.query(self.model).filter(self.model.id == id).first()
         if obj:
-            obj.status = "inactive"
+            obj.status = "deleted"
             db.add(obj)
             db.commit()
             db.refresh(obj)
