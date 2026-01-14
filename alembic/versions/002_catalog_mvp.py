@@ -20,6 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 
+
+
 def upgrade() -> None:
     # ===== Part 1: Create audit_logs table =====
     op.create_table(
