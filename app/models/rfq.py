@@ -33,13 +33,16 @@ class RFQItem(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     rfq_id: Mapped[str] = mapped_column(ForeignKey("rfqs.id"), nullable=False)
     
+    # Snapshot from Catalog (immutable after creation)
+    catalog_item_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_item_no: Mapped[str | None] = mapped_column(String, nullable=True)  # Catalog itemNo snapshot
+    type: Mapped[str] = mapped_column(String, nullable=False)  # product / service / output
+    
+    # Editable fields (can be modified after creation)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     unit: Mapped[str] = mapped_column(String, nullable=False)
-    
-    # Snapshot from catalog (optional)
-    catalog_item_id: Mapped[str | None] = mapped_column(String, nullable=True)
     
     # 🔒 Internal Only
     reference_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
@@ -48,8 +51,14 @@ class RFQItem(Base):
     selling_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     tax_category: Mapped[str | None] = mapped_column(String, nullable=True) # ID or Code
     
+    # Output type specific fields (material calculation)
+    length_cm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    width_cm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    area_unit: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)  # Calculated by backend
+    
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     rfq: Mapped["RFQ"] = relationship(back_populates="items")
     vendor_quotes: Mapped[List["VendorQuote"]] = relationship(back_populates="rfq_item", cascade="all, delete-orphan")
+

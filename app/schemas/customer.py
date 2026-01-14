@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 
 class CustomerBase(BaseModel):
@@ -8,9 +8,16 @@ class CustomerBase(BaseModel):
     # Company Information
     company_name: str
     company_email: Optional[str] = None
-    tax_id: Optional[str] = None
+    tax_id: str  # Required, minimum 8 characters
     industry: Optional[str] = None
     website: Optional[str] = None
+
+    @field_validator('tax_id')
+    @classmethod
+    def validate_tax_id(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('統一編號至少需要 8 碼')
+        return v
 
     # Address Information (all optional)
     address_line1: Optional[str] = None
@@ -60,6 +67,13 @@ class CustomerUpdate(BaseModel):
     notes: Optional[str] = None
 
     status: Optional[str] = None
+
+    @field_validator('tax_id')
+    @classmethod
+    def validate_tax_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and len(v) < 8:
+            raise ValueError('統一編號至少需要 8 碼')
+        return v
 
 
 class Customer(CustomerBase):
