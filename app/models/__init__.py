@@ -7,7 +7,7 @@ from .template import QuoteTemplate, InvoiceTemplate
 from .unit import Unit
 
 # Transaction
-from .rfq import RFQ, RFQItem
+from .rfq import RFQ, RFQVersion, RFQItem, RFQStatus, TaxSetting
 from .vendor_quote import VendorQuote
 
 # Snapshot

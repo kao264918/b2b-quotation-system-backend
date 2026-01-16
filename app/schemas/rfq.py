@@ -1,117 +1,245 @@
+"""
+RFQ Schemas (Pydantic) - API Request/Response Models
+
+Separates:
+- Create/Update schemas (input validation)
+- Response schemas (output serialization)
+- Internal schemas (with sensitive data, not exposed to API)
+"""
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Literal
-from pydantic import BaseModel, ConfigDict
-from .vendor_quote import VendorQuote
+from pydantic import BaseModel, ConfigDict, Field
 
 
-# ===== RFQ Item Schemas =====
+# ============================================================================
+# Enums (mirroring SQLAlchemy enums for API documentation)
+# ============================================================================
+
+RFQStatusType = Literal["draft", "vendor_quoting", "finalized", "won", "lost"]
+TaxSettingType = Literal["taxable_5", "taxable_10", "non_taxable", "tax_exempt"]
+ItemType = Literal["product", "service", "output"]
+
+
+# ============================================================================
+# RFQ Item Schemas
+# ============================================================================
 
 class RFQItemBase(BaseModel):
-    """Base schema for RFQ Item"""
-    name: str
-    type: Literal["product", "service", "output"]
-    unit: str
-    quantity: Decimal
+    """Base schema for RFQ Item - shared fields"""
+    name: str = Field(..., min_length=1, max_length=255)
+    item_type: ItemType
     description: Optional[str] = None
-    notes: Optional[str] = None
+    spec_notes: Optional[str] = None
+    quantity: Decimal = Field(default=Decimal("1"), ge=0)
+    unit: str = Field(default="pcs", max_length=20)
+    unit_price: Decimal = Field(default=Decimal("0"), ge=0)
     
-    # Customer-facing
-    selling_price: Optional[Decimal] = None
-    tax_category: Optional[str] = None
-    
-    # Output type specific
-    length_cm: Optional[Decimal] = None
-    width_cm: Optional[Decimal] = None
-    area_unit: Optional[Decimal] = None  # Read-only, calculated by backend
-
-
-class RFQItemCreateFromCatalog(BaseModel):
-    """Create RFQ Item from Catalog Item (Snapshot)"""
-    catalog_item_id: str
-    quantity: Decimal = Decimal("1")
-    
-    # Output type required fields
-    length_cm: Optional[Decimal] = None
-    width_cm: Optional[Decimal] = None
-    
-    # Optional overrides
-    unit_price_override: Optional[Decimal] = None
-    description_override: Optional[str] = None
+    # Dimension fields (for output type)
+    length_cm: Optional[Decimal] = Field(default=None, ge=0)
+    width_cm: Optional[Decimal] = Field(default=None, ge=0)
 
 
 class RFQItemCreate(RFQItemBase):
-    """Direct create (legacy, includes reference_cost)"""
+    """Create a new item directly"""
     catalog_item_id: Optional[str] = None
-    reference_cost: Optional[Decimal] = None
+    sort_order: int = 0
 
 
-class RFQItemUpdate(BaseModel):
-    """Update schema - allows modifying editable fields only"""
-    name: Optional[str] = None
-    unit: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    selling_price: Optional[Decimal] = None
-    description: Optional[str] = None
-    notes: Optional[str] = None
-    tax_category: Optional[str] = None
+class RFQItemFromCatalog(BaseModel):
+    """Create item by copying from catalog"""
+    catalog_item_id: str
+    quantity: Decimal = Field(default=Decimal("1"), ge=0)
     
-    # Output type fields (triggers recalculation)
+    # Optional dimension overrides (for output type)
     length_cm: Optional[Decimal] = None
     width_cm: Optional[Decimal] = None
     
-    # Immutable fields (NOT in update schema):
-    # - catalog_item_id
-    # - source_item_no
-    # - type
-    # - area_unit (calculated)
+    # Optional price/description overrides
+    unit_price_override: Optional[Decimal] = None
+    spec_notes: Optional[str] = None
+    sort_order: int = 0
 
 
-class RFQItem(RFQItemBase):
-    """Response schema include all fields"""
+class RFQItemUpdate(BaseModel):
+    """Update existing item - only editable fields"""
+    name: Optional[str] = Field(default=None, max_length=255)
+    description: Optional[str] = None
+    spec_notes: Optional[str] = None
+    quantity: Optional[Decimal] = Field(default=None, ge=0)
+    unit: Optional[str] = Field(default=None, max_length=20)
+    unit_price: Optional[Decimal] = Field(default=None, ge=0)
+    length_cm: Optional[Decimal] = Field(default=None, ge=0)
+    width_cm: Optional[Decimal] = Field(default=None, ge=0)
+    sort_order: Optional[int] = None
+
+
+class RFQItemResponse(RFQItemBase):
+    """Response schema - includes computed fields"""
     id: str
-    rfq_id: str
+    rfq_version_id: str
     catalog_item_id: Optional[str] = None
     source_item_no: Optional[str] = None
+    sort_order: int
+    
+    # Computed by backend
+    area_unit: Optional[Decimal] = None
+    line_subtotal: Decimal
     
     model_config = ConfigDict(from_attributes=True)
 
 
-class RFQItemInternal(RFQItem):
-    """Internal schema with reference_cost"""
-    reference_cost: Optional[Decimal] = None
-    vendor_quotes: List[VendorQuote] = []
+# ============================================================================
+# RFQ Version Schemas
+# ============================================================================
+
+class VendorSnapshot(BaseModel):
+    """Vendor data snapshot stored in version"""
+    id: str
+    name: str
+    company_name: str
+    tax_id: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    primary_contact_name: Optional[str] = None
+    primary_contact_phone: Optional[str] = None
 
 
-# ===== RFQ Schemas =====
+class RFQVersionBase(BaseModel):
+    """Base schema for RFQ Version"""
+    project_name: str = Field(..., min_length=1, max_length=255)
+    required_date: Optional[datetime] = None
+    tax_setting: TaxSettingType = "non_taxable"
+    currency: str = Field(default="TWD", max_length=10)
+    notes: Optional[str] = None
 
-class RFQBase(BaseModel):
-    title: str
-    customer_id: str
-    description: Optional[str] = None
-    status: str = "draft"
 
-
-class RFQCreate(RFQBase):
+class RFQVersionCreate(RFQVersionBase):
+    """Create a new version - includes items"""
     items: List[RFQItemCreate] = []
 
 
-class RFQUpdate(RFQBase):
-    title: Optional[str] = None
-    customer_id: Optional[str] = None
-    items: Optional[List[RFQItemCreate]] = None
-
-
-class RFQ(RFQBase):
+class RFQVersionResponse(RFQVersionBase):
+    """Response schema for version"""
     id: str
+    rfq_id: str
+    version_number: int
+    vendor_snapshot: VendorSnapshot
+    
+    # Computed totals (backend-authoritative)
+    subtotal: Decimal
+    tax_amount: Decimal
+    total_amount: Decimal
+    
+    # Audit
     created_at: datetime
-    updated_at: datetime
-    items: List[RFQItem] = []
+    created_by: Optional[str] = None
+    
+    # Line items
+    items: List[RFQItemResponse] = []
     
     model_config = ConfigDict(from_attributes=True)
 
 
-class RFQDetailInternal(RFQ):
-    """Internal RFQ with reference costs"""
-    items: List[RFQItemInternal] = []
+class RFQVersionSummary(BaseModel):
+    """Lightweight version info for list/dropdown"""
+    id: str
+    version_number: int
+    total_amount: Decimal
+    created_at: datetime
+    notes: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
+
+# ============================================================================
+# RFQ Master Schemas
+# ============================================================================
+
+class RFQBase(BaseModel):
+    """Base schema for RFQ master"""
+    project_name: str = Field(..., min_length=1, max_length=255)
+    vendor_id: str
+
+
+class RFQCreate(RFQBase):
+    """Create new RFQ - includes first version data"""
+    required_date: Optional[datetime] = None
+    tax_setting: TaxSettingType = "non_taxable"
+    notes: Optional[str] = None
+    items: List[RFQItemCreate] = []
+
+
+class RFQUpdate(BaseModel):
+    """Update RFQ - creates new version"""
+    project_name: Optional[str] = Field(default=None, max_length=255)
+    required_date: Optional[datetime] = None
+    tax_setting: Optional[TaxSettingType] = None
+    notes: Optional[str] = None  # Revision notes (required for non-first versions)
+    items: Optional[List[RFQItemCreate]] = None
+
+
+class RFQStatusUpdate(BaseModel):
+    """Update workflow status only"""
+    status: RFQStatusType
+
+
+class RFQSelectVersion(BaseModel):
+    """Select a version as final"""
+    version_id: str
+
+
+class RFQResponse(RFQBase):
+    """Response schema for RFQ master"""
+    id: str
+    rfq_no: str
+    status: RFQStatusType
+    
+    # Version pointers
+    current_version_id: Optional[str] = None
+    selected_version_id: Optional[str] = None
+    
+    # Timestamps
+    created_at: datetime
+    updated_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RFQDetailResponse(RFQResponse):
+    """Full RFQ with current version data"""
+    current_version: Optional[RFQVersionResponse] = None
+    versions: List[RFQVersionSummary] = []
+
+
+class RFQListItemResponse(BaseModel):
+    """Lightweight RFQ info for list view"""
+    id: str
+    rfq_no: str
+    project_name: str
+    vendor_name: str  # Denormalized from vendor
+    status: RFQStatusType
+    
+    # From current version
+    subtotal: Decimal
+    total_amount: Decimal
+    
+    created_at: datetime
+    updated_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RFQListResponse(BaseModel):
+    """Paginated list response"""
+    items: List[RFQListItemResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+# Aliases for consistent naming in __init__.py
+RFQ = RFQResponse
+RFQItem = RFQItemResponse
+RFQItemCreateFromCatalog = RFQItemFromCatalog
