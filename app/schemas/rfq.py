@@ -16,7 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 # Enums (mirroring SQLAlchemy enums for API documentation)
 # ============================================================================
 
-RFQStatusType = Literal["draft", "vendor_quoting", "finalized", "won", "lost"]
+RFQStatusType = Literal["draft", "vendor_quoting", "finalized", "closed", "discarded"]
+AccountingStatusType = Literal["unfulfilled", "fulfilled", "paid"]
 TaxSettingType = Literal["taxable_5", "taxable_10", "non_taxable", "tax_exempt"]
 ItemType = Literal["product", "service", "output"]
 
@@ -185,6 +186,11 @@ class RFQStatusUpdate(BaseModel):
     status: RFQStatusType
 
 
+class RFQAccountingStatusUpdate(BaseModel):
+    """Update accounting status only (independent of workflow)"""
+    accounting_status: AccountingStatusType
+
+
 class RFQSelectVersion(BaseModel):
     """Select a version as final"""
     version_id: str
@@ -195,6 +201,7 @@ class RFQResponse(RFQBase):
     id: str
     rfq_no: str
     status: RFQStatusType
+    accounting_status: AccountingStatusType
     
     # Version pointers
     current_version_id: Optional[str] = None
@@ -220,6 +227,7 @@ class RFQListItemResponse(BaseModel):
     project_name: str
     vendor_name: str  # Denormalized from vendor
     status: RFQStatusType
+    accounting_status: AccountingStatusType
     
     # From current version
     subtotal: Decimal

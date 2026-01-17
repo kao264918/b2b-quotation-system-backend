@@ -11,7 +11,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
-from app.models.rfq import RFQ, RFQVersion, RFQItem, RFQStatus, TaxSetting
+from app.models.rfq import RFQ, RFQVersion, RFQItem, RFQStatus, AccountingStatus, TaxSetting
 from app.models.vendor import Vendor
 from app.schemas.rfq import (
     RFQCreate, RFQUpdate, RFQItemCreate, RFQStatusUpdate,
@@ -287,7 +287,10 @@ def update_status(db: Session, *, rfq: RFQ, status: str) -> RFQ:
 
 
 def select_final_version(db: Session, *, rfq: RFQ, version_id: str) -> RFQ:
-    """Select a version as the final version."""
+    """
+    Select a version as the final version.
+    Also sets RFQ status to FINALIZED.
+    """
     # Verify version exists and belongs to this RFQ
     version = db.query(RFQVersion).filter(
         RFQVersion.id == version_id,
@@ -298,16 +301,111 @@ def select_final_version(db: Session, *, rfq: RFQ, version_id: str) -> RFQ:
         raise ValueError("Version not found")
     
     rfq.selected_version_id = version_id
+    rfq.status = RFQStatus.FINALIZED.value
+    db.commit()
+    db.refresh(rfq)
+    return rfq
+
+
+def revert_rfq(db: Session, *, rfq: RFQ, notes: str = "Reverted from finalized") -> RFQVersion:
+    """
+    Revert a FINALIZED RFQ to VENDOR_QUOTING.
+    Creates a new version from the selected (final) version.
+    
+    Precondition: RFQ must be in FINALIZED status.
+    """
+    if rfq.status != RFQStatus.FINALIZED.value:
+        raise ValueError("Can only revert from FINALIZED status")
+    
+    if not rfq.selected_version_id:
+        raise ValueError("No selected version to revert from")
+    
+    # Get the current final version
+    final_version = get_version(db, rfq.selected_version_id)
+    if not final_version:
+        raise ValueError("Selected version not found")
+    
+    # Get next version number
+    latest = db.query(RFQVersion).filter(
+        RFQVersion.rfq_id == rfq.id
+    ).order_by(desc(RFQVersion.version_number)).first()
+    next_version_num = (latest.version_number if latest else 0) + 1
+    
+    # Create new version from the final version
+    new_version = RFQVersion(
+        rfq_id=rfq.id,
+        version_number=next_version_num,
+        vendor_snapshot=final_version.vendor_snapshot,
+        project_name=final_version.project_name,
+        required_date=final_version.required_date,
+        tax_setting=final_version.tax_setting,
+        currency=final_version.currency,
+        notes=notes,
+    )
+    db.add(new_version)
+    db.flush()
+    
+    # Copy items from final version
+    items_data = []
+    for old_item in final_version.items:
+        item_dict = {
+            "catalog_item_id": old_item.catalog_item_id,
+            "source_item_no": old_item.source_item_no,
+            "item_type": old_item.item_type,
+            "name": old_item.name,
+            "description": old_item.description,
+            "spec_notes": old_item.spec_notes,
+            "quantity": old_item.quantity,
+            "unit": old_item.unit,
+            "unit_price": old_item.unit_price,
+            "length_cm": old_item.length_cm,
+            "width_cm": old_item.width_cm,
+            "sort_order": old_item.sort_order,
+        }
+        item_dict = recalculate_rfq_item(item_dict)
+        
+        item = RFQItem(rfq_version_id=new_version.id, **item_dict)
+        db.add(item)
+        items_data.append(item_dict)
+    
+    # Calculate totals
+    totals = calculate_item_totals(items_data, new_version.tax_setting)
+    new_version.subtotal = totals["subtotal"]
+    new_version.tax_amount = totals["tax_amount"]
+    new_version.total_amount = totals["total_amount"]
+    
+    # Update RFQ: change status, update current version, clear selected
+    rfq.status = RFQStatus.VENDOR_QUOTING.value
+    rfq.current_version_id = new_version.id
+    # Note: selected_version_id is kept for history reference
+    
+    db.commit()
+    db.refresh(new_version)
+    return new_version
+
+
+def update_accounting_status(db: Session, *, rfq: RFQ, accounting_status: str) -> RFQ:
+    """
+    Update accounting status independently of workflow status.
+    """
+    rfq.accounting_status = accounting_status
     db.commit()
     db.refresh(rfq)
     return rfq
 
 
 def delete_rfq(db: Session, rfq_id: str) -> bool:
-    """Delete RFQ and all versions."""
+    """
+    Delete RFQ and all versions.
+    Only allowed in DRAFT or VENDOR_QUOTING status.
+    """
     rfq = db.query(RFQ).filter(RFQ.id == rfq_id).first()
     if not rfq:
         return False
+    
+    # Check if deletable
+    if rfq.status not in [RFQStatus.DRAFT.value, RFQStatus.VENDOR_QUOTING.value]:
+        raise ValueError(f"Cannot delete RFQ in {rfq.status} status")
     
     db.delete(rfq)
     db.commit()

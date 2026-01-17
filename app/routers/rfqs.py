@@ -19,7 +19,7 @@ import math
 
 from app.database import get_db
 from app.schemas.rfq import (
-    RFQCreate, RFQUpdate, RFQStatusUpdate,
+    RFQCreate, RFQUpdate, RFQStatusUpdate, RFQAccountingStatusUpdate,
     RFQResponse, RFQDetailResponse, RFQListItemResponse, RFQListResponse,
     RFQVersionResponse, RFQVersionSummary, RFQSelectVersion
 )
@@ -73,6 +73,7 @@ def list_rfqs(
             project_name=rfq.project_name,
             vendor_name=rfq.vendor.name if rfq.vendor else "Unknown",
             status=rfq.status,
+            accounting_status=rfq.accounting_status,
             subtotal=current_version.subtotal if current_version else 0,
             total_amount=current_version.total_amount if current_version else 0,
             created_at=rfq.created_at,
@@ -124,6 +125,7 @@ def get_rfq(
         project_name=rfq.project_name,
         vendor_id=rfq.vendor_id,
         status=rfq.status,
+        accounting_status=rfq.accounting_status,
         current_version_id=rfq.current_version_id,
         selected_version_id=rfq.selected_version_id,
         created_at=rfq.created_at,
@@ -145,9 +147,9 @@ def update_rfq(
     if not rfq:
         raise HTTPException(status_code=404, detail="RFQ not found")
     
-    # Check if RFQ is finalized
-    if rfq.status in ["won", "lost"]:
-        raise HTTPException(status_code=400, detail="Cannot modify a closed RFQ")
+    # Check if RFQ is in a locked status
+    if rfq.status in ["finalized", "closed", "discarded"]:
+        raise HTTPException(status_code=400, detail="Cannot modify a locked RFQ. Use Revert to re-open.")
     
     try:
         rfq_crud.create_new_version(db, rfq=rfq, obj_in=rfq_in)
@@ -164,9 +166,12 @@ def delete_rfq(
     db: Session = Depends(get_db),
     id: str
 ) -> None:
-    """Delete RFQ and all versions."""
-    if not rfq_crud.delete_rfq(db, rfq_id=id):
-        raise HTTPException(status_code=404, detail="RFQ not found")
+    """Delete RFQ and all versions. Only allowed in DRAFT or VENDOR_QUOTING status."""
+    try:
+        if not rfq_crud.delete_rfq(db, rfq_id=id):
+            raise HTTPException(status_code=404, detail="RFQ not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.patch("/{id}/status", response_model=RFQResponse)
@@ -225,7 +230,7 @@ def select_final_version(
     id: str,
     version_id: str
 ) -> Any:
-    """Select a version as the final version."""
+    """Select a version as the final version. Sets RFQ status to FINALIZED."""
     rfq = rfq_crud.get_rfq(db, rfq_id=id)
     if not rfq:
         raise HTTPException(status_code=404, detail="RFQ not found")
@@ -234,3 +239,38 @@ def select_final_version(
         return rfq_crud.select_final_version(db, rfq=rfq, version_id=version_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{id}/revert", response_model=RFQVersionResponse)
+def revert_rfq(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+) -> Any:
+    """
+    Revert a FINALIZED RFQ to VENDOR_QUOTING.
+    Creates a new version from the final version.
+    """
+    rfq = rfq_crud.get_rfq(db, rfq_id=id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    try:
+        return rfq_crud.revert_rfq(db, rfq=rfq)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/{id}/accounting-status", response_model=RFQResponse)
+def update_accounting_status(
+    *,
+    db: Session = Depends(get_db),
+    id: str,
+    status_in: RFQAccountingStatusUpdate
+) -> Any:
+    """Update accounting status (independent of workflow status)."""
+    rfq = rfq_crud.get_rfq(db, rfq_id=id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    return rfq_crud.update_accounting_status(db, rfq=rfq, accounting_status=status_in.accounting_status)

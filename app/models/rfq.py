@@ -31,8 +31,15 @@ class RFQStatus(str, enum.Enum):
     DRAFT = "draft"
     VENDOR_QUOTING = "vendor_quoting"
     FINALIZED = "finalized"
-    WON = "won"
-    LOST = "lost"
+    CLOSED = "closed"       # 結案 (ready for Quote/Invoice)
+    DISCARDED = "discarded"  # 丟棄 (never goes to Quote)
+
+
+class AccountingStatus(str, enum.Enum):
+    """Accounting/fulfillment status (independent of RFQ workflow)"""
+    UNFULFILLED = "unfulfilled"  # 未交付
+    FULFILLED = "fulfilled"       # 已交付
+    PAID = "paid"                 # 已付款
 
 
 class TaxSetting(str, enum.Enum):
@@ -69,6 +76,13 @@ class RFQ(Base):
     status: Mapped[str] = mapped_column(
         String(20), 
         default=RFQStatus.DRAFT.value,
+        nullable=False
+    )
+    
+    # Accounting/fulfillment status (independent of workflow)
+    accounting_status: Mapped[str] = mapped_column(
+        String(20),
+        default=AccountingStatus.UNFULFILLED.value,
         nullable=False
     )
     
