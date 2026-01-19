@@ -181,10 +181,29 @@ def update_rfq_status(
     id: str,
     status_in: RFQStatusUpdate
 ) -> Any:
-    """Update RFQ workflow status."""
+    """Update RFQ workflow status with transition validation."""
     rfq = rfq_crud.get_rfq(db, rfq_id=id)
     if not rfq:
         raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    # Valid status transitions (canonical keys)
+    VALID_TRANSITIONS = {
+        'draft': ['vendor_quoting'],
+        'vendor_quoting': ['draft', 'finalized'],
+        'finalized': ['closed', 'discarded'],
+        'closed': [],      # Must use /revert endpoint
+        'discarded': [],   # Must use /revert endpoint
+    }
+    
+    current_status = rfq.status
+    target_status = status_in.status
+    
+    if target_status not in VALID_TRANSITIONS.get(current_status, []):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status transition: {current_status} → {target_status}. "
+                   f"Allowed transitions from {current_status}: {VALID_TRANSITIONS.get(current_status, [])}"
+        )
     
     return rfq_crud.update_status(db, rfq=rfq, status=status_in.status)
 
