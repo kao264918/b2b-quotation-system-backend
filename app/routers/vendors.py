@@ -1,5 +1,5 @@
-from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
@@ -11,9 +11,14 @@ router = APIRouter()
 def read_vendors(
     db: Session = Depends(get_db),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    search: Optional[str] = Query(None, description="Search by name or company name")
 ) -> Any:
-    return crud.vendor.get_multi(db, skip=skip, limit=limit)
+    """
+    Get vendors with optional search filter.
+    Search matches name or company_name (case-insensitive).
+    """
+    return crud.vendor.get_multi(db, skip=skip, limit=limit, search=search)
 
 @router.post("/", response_model=schemas.Vendor)
 def create_vendor(
