@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units, companies
+from app.routers import customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units
 from app.routers.internal import vendor_quotes
 
 app = FastAPI(
@@ -29,7 +29,6 @@ app.add_middleware(
 # Public Routers
 app.include_router(customers.router, prefix=f"{settings.API_V1_STR}/customers", tags=["customers"])
 app.include_router(vendors.router, prefix=f"{settings.API_V1_STR}/vendors", tags=["vendors"])
-app.include_router(companies.router, prefix=f"{settings.API_V1_STR}/companies", tags=["companies"])
 app.include_router(catalog.router, prefix=f"{settings.API_V1_STR}/catalog-items", tags=["catalog"])
 app.include_router(tax_categories.router, prefix=f"{settings.API_V1_STR}/tax-categories", tags=["tax-categories"])
 app.include_router(templates.router, prefix=f"{settings.API_V1_STR}/templates", tags=["templates"])

@@ -7,7 +7,6 @@ Implements the versioned RFQ model where:
 - Every update creates a new version
 """
 from typing import Any, Dict, List, Optional
-from datetime import datetime
 from decimal import Decimal
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
@@ -138,10 +137,10 @@ def get_rfqs(
     search: Optional[str] = None,
     status: Optional[str] = None
 ) -> List[RFQ]:
-    """Get list of RFQs with optional filtering. Excludes soft-deleted records."""
+    """Get list of RFQs with optional filtering."""
     query = db.query(RFQ).options(
         joinedload(RFQ.vendor)
-    ).filter(RFQ.deleted_at.is_(None))  # Exclude soft-deleted
+    )
     
     if search:
         search_term = f"%{search}%"
@@ -162,8 +161,8 @@ def count_rfqs(
     search: Optional[str] = None,
     status: Optional[str] = None
 ) -> int:
-    """Count RFQs with optional filtering. Excludes soft-deleted records."""
-    query = db.query(RFQ).filter(RFQ.deleted_at.is_(None))  # Exclude soft-deleted
+    """Count RFQs with optional filtering."""
+    query = db.query(RFQ)
     
     if search:
         search_term = f"%{search}%"
@@ -308,44 +307,47 @@ def select_final_version(db: Session, *, rfq: RFQ, version_id: str) -> RFQ:
     return rfq
 
 
-def revert_rfq(db: Session, *, rfq: RFQ, notes: str = "Reverted for re-quoting") -> RFQVersion:
+def revert_rfq(db: Session, *, rfq: RFQ, notes: str = "Reverted from finalized") -> RFQVersion:
     """
-    Revert an RFQ from FINALIZED/CLOSED/DISCARDED to VENDOR_QUOTING.
-    Creates a new version from the latest version (not selected_version_id).
+    Revert a FINALIZED RFQ to VENDOR_QUOTING.
+    Creates a new version from the selected (final) version.
     
-    Precondition: RFQ must be in FINALIZED, CLOSED, or DISCARDED status.
+    Precondition: RFQ must be in FINALIZED status.
     """
-    allowed_statuses = [RFQStatus.FINALIZED.value, RFQStatus.CLOSED.value, RFQStatus.DISCARDED.value]
-    if rfq.status not in allowed_statuses:
-        raise ValueError(f"Can only revert from FINALIZED/CLOSED/DISCARDED status, current: {rfq.status}")
+    if rfq.status != RFQStatus.FINALIZED.value:
+        raise ValueError("Can only revert from FINALIZED status")
     
-    # Use latest version as source (not selected_version_id)
-    source_version = db.query(RFQVersion).filter(
+    if not rfq.selected_version_id:
+        raise ValueError("No selected version to revert from")
+    
+    # Get the current final version
+    final_version = get_version(db, rfq.selected_version_id)
+    if not final_version:
+        raise ValueError("Selected version not found")
+    
+    # Get next version number
+    latest = db.query(RFQVersion).filter(
         RFQVersion.rfq_id == rfq.id
     ).order_by(desc(RFQVersion.version_number)).first()
-    if not source_version:
-        raise ValueError("No version found to revert from")
+    next_version_num = (latest.version_number if latest else 0) + 1
     
-    # Get next version number (source_version is already the latest)
-    next_version_num = source_version.version_number + 1
-    
-    # Create new version from the source version
+    # Create new version from the final version
     new_version = RFQVersion(
         rfq_id=rfq.id,
         version_number=next_version_num,
-        vendor_snapshot=source_version.vendor_snapshot,
-        project_name=source_version.project_name,
-        required_date=source_version.required_date,
-        tax_setting=source_version.tax_setting,
-        currency=source_version.currency,
+        vendor_snapshot=final_version.vendor_snapshot,
+        project_name=final_version.project_name,
+        required_date=final_version.required_date,
+        tax_setting=final_version.tax_setting,
+        currency=final_version.currency,
         notes=notes,
     )
     db.add(new_version)
     db.flush()
     
-    # Copy items from source version
+    # Copy items from final version
     items_data = []
-    for old_item in source_version.items:
+    for old_item in final_version.items:
         item_dict = {
             "catalog_item_id": old_item.catalog_item_id,
             "source_item_no": old_item.source_item_no,
@@ -394,14 +396,17 @@ def update_accounting_status(db: Session, *, rfq: RFQ, accounting_status: str) -
 
 def delete_rfq(db: Session, rfq_id: str) -> bool:
     """
-    Soft delete RFQ by setting deleted_at timestamp.
-    Allowed for ALL statuses (no status restriction).
+    Delete RFQ and all versions.
+    Only allowed in DRAFT or VENDOR_QUOTING status.
     """
     rfq = db.query(RFQ).filter(RFQ.id == rfq_id).first()
     if not rfq:
         return False
     
-    # Soft delete - set deleted_at timestamp
-    rfq.deleted_at = datetime.utcnow()
+    # Check if deletable
+    if rfq.status not in [RFQStatus.DRAFT.value, RFQStatus.VENDOR_QUOTING.value]:
+        raise ValueError(f"Cannot delete RFQ in {rfq.status} status")
+    
+    db.delete(rfq)
     db.commit()
     return True

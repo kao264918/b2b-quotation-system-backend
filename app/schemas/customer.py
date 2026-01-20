@@ -37,7 +37,6 @@ class CustomerBase(BaseModel):
     notes: Optional[str] = None
 
     status: str = "active"
-    roles: List[str] = ["customer"]
 
 
 class CustomerCreate(CustomerBase):
@@ -68,7 +67,6 @@ class CustomerUpdate(BaseModel):
     notes: Optional[str] = None
 
     status: Optional[str] = None
-    roles: Optional[List[str]] = None
 
     @field_validator('tax_id')
     @classmethod
