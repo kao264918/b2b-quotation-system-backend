@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for caching
