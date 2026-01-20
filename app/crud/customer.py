@@ -8,6 +8,34 @@ from app.schemas.customer import CustomerCreate, CustomerUpdate
 class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
     """CRUD operations for Customer with spec-compliant behaviors"""
 
+    def get_multi_by_role(
+        self, db: Session, *, role: str, status: str = "active", skip: int = 0, limit: int = 100
+    ) -> List[Customer]:
+        """Get customers filtered by role and status"""
+        # Using simple string contains for JSON list since it's exact match string in list
+        # For Postgres JSONB: .filter(self.model.roles.contains([role]))
+        # For SQLite (dev): might need custom handling if JSON not fully supported, but SQLAlchemy usually handles it.
+        # Assuming Postgres for prod, but local might be SQLite?
+        # Let's try flexible approach or standard contains.
+        return (
+            db.query(self.model)
+            .filter(self.model.status == status)
+            .filter(func.json_each(self.model.roles).value == role)  # This works for SQLite JSON1
+            # .filter(self.model.roles.contains([role])) # This is for Postgres JSONB
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def count_by_role(self, db: Session, *, role: str, status: str = "active") -> int:
+        """Count customers filtered by role and status"""
+        return (
+            db.query(self.model)
+            .filter(self.model.status == status)
+            .filter(func.json_each(self.model.roles).value == role)
+            .count()
+        )
+
     def get_multi_active(
         self, db: Session, skip: int = 0, limit: int = 100
     ) -> List[Customer]:
