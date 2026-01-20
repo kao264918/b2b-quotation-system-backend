@@ -8,5 +8,3 @@ from .rfq import RFQ, RFQCreate, RFQUpdate, RFQItem, RFQItemCreate
 from .vendor_quote import VendorQuote, VendorQuoteCreate, VendorQuoteUpdate
 from .quote import Quote, QuoteCreate, QuoteUpdate, QuoteItem, QuoteItemCreate
 from .invoice import Invoice, InvoiceCreate, InvoiceUpdate, InvoiceItem, InvoiceItemCreate
-from .company import CompanyListItem, CompanyListResponse
-

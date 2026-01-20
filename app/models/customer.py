@@ -42,3 +42,7 @@ class Customer(Base):
     # Billing & Internal
     billing_email: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Vendor specific fields ( Unified Master )
+    default_currency: Mapped[str | None] = mapped_column(String, default="TWD")
+    default_payment_terms: Mapped[str | None] = mapped_column(String, nullable=True)

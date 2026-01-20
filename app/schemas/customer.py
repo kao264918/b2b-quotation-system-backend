@@ -39,6 +39,10 @@ class CustomerBase(BaseModel):
     status: str = "active"
     roles: List[str] = ["customer"]
 
+    # Vendor specific fields
+    default_currency: Optional[str] = "TWD"
+    default_payment_terms: Optional[str] = None
+
 
 class CustomerCreate(CustomerBase):
     """Schema for creating a Customer - all required fields must be provided"""
@@ -69,6 +73,9 @@ class CustomerUpdate(BaseModel):
 
     status: Optional[str] = None
     roles: Optional[List[str]] = None
+    
+    default_currency: Optional[str] = None
+    default_payment_terms: Optional[str] = None
 
     @field_validator('tax_id')
     @classmethod
