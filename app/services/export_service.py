@@ -8,8 +8,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
-from app.models.rfq import RFQ
-from app.models.rfq_version import RFQVersion
+from app.models.rfq import RFQ, RFQVersion
 
 def register_fonts():
     """Attempt to register a CJK font."""
