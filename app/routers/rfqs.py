@@ -24,8 +24,6 @@ from app.schemas.rfq import (
     RFQVersionResponse, RFQVersionSummary, RFQSelectVersion
 )
 from app.crud import rfq as rfq_crud
-from fastapi.responses import StreamingResponse
-from app.services.export_service import generate_pdf, generate_excel
 
 router = APIRouter()
 
@@ -295,79 +293,3 @@ def update_accounting_status(
         raise HTTPException(status_code=404, detail="RFQ not found")
     
     return rfq_crud.update_accounting_status(db, rfq=rfq, accounting_status=status_in.accounting_status)
-
-@router.post("/{id}/export/pdf")
-def export_rfq_pdf(
-    *,
-    db: Session = Depends(get_db),
-    id: str,
-    version_id: Optional[str] = None
-) -> StreamingResponse:
-    """Export RFQ to PDF."""
-    rfq = rfq_crud.get_rfq(db, rfq_id=id)
-    if not rfq:
-        raise HTTPException(status_code=404, detail="RFQ not found")
-        
-    target_version_id = version_id or rfq.current_version_id
-    if not target_version_id:
-         raise HTTPException(status_code=404, detail="No version available")
-
-    # Find version object from relation or fetch
-    version = next((v for v in rfq.versions if v.id == target_version_id), None)
-    if not version:
-        version = rfq_crud.get_version(db, version_id=target_version_id)
-        
-    if not version:
-        raise HTTPException(status_code=404, detail="Version not found")
-             
-    buffer = generate_pdf(rfq, version)
-    filename = f"{rfq.rfq_no}_v{version.version_number}.pdf"
-    
-    from urllib.parse import quote
-    encoded_filename = quote(filename)
-    
-    return StreamingResponse(
-        buffer,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-        }
-    )
-
-
-@router.post("/{id}/export/excel")
-def export_rfq_excel(
-    *,
-    db: Session = Depends(get_db),
-    id: str,
-    version_id: Optional[str] = None
-) -> StreamingResponse:
-    """Export RFQ to Excel."""
-    rfq = rfq_crud.get_rfq(db, rfq_id=id)
-    if not rfq:
-        raise HTTPException(status_code=404, detail="RFQ not found")
-        
-    target_version_id = version_id or rfq.current_version_id
-    if not target_version_id:
-         raise HTTPException(status_code=404, detail="No version available")
-
-    version = next((v for v in rfq.versions if v.id == target_version_id), None)
-    if not version:
-        version = rfq_crud.get_version(db, version_id=target_version_id)
-        
-    if not version:
-        raise HTTPException(status_code=404, detail="Version not found")
-             
-    buffer = generate_excel(rfq, version)
-    filename = f"{rfq.rfq_no}_v{version.version_number}.xlsx"
-    
-    from urllib.parse import quote
-    encoded_filename = quote(filename)
-    
-    return StreamingResponse(
-        buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-        }
-    )
