@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, Text
+from sqlalchemy import String, DateTime, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -17,6 +17,7 @@ class Customer(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     status: Mapped[str] = mapped_column(String, default="active")  # active | inactive
+    roles: Mapped[list[str]] = mapped_column(JSON, default=["customer"])  # customer, vendor
 
     # Company Information
     company_name: Mapped[str] = mapped_column(String, nullable=False)
@@ -41,3 +42,7 @@ class Customer(Base):
     # Billing & Internal
     billing_email: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Vendor specific fields ( Unified Master )
+    default_currency: Mapped[str | None] = mapped_column(String, default="TWD")
+    default_payment_terms: Mapped[str | None] = mapped_column(String, nullable=True)

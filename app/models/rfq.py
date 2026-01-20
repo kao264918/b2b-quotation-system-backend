@@ -66,7 +66,8 @@ class RFQ(Base):
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     
     # Link to vendor master (for reference only; actual data is snapshotted in version)
-    vendor_id: Mapped[str] = mapped_column(ForeignKey("vendors.id"), nullable=False)
+    # Using Customer table with role='vendor'
+    vendor_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
     
     # Version pointers
     current_version_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -91,7 +92,7 @@ class RFQ(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    vendor: Mapped["Vendor"] = relationship("Vendor")
+    vendor: Mapped["Customer"] = relationship("Customer")
     versions: Mapped[List["RFQVersion"]] = relationship(
         "RFQVersion", 
         back_populates="rfq", 
@@ -198,5 +199,6 @@ class RFQItem(Base):
 
 
 # Import for type hints only (avoid circular imports)
-from app.models.vendor import Vendor
+# from app.models.vendor import Vendor # Deprecated
+from app.models.customer import Customer
 from app.models.vendor_quote import VendorQuote

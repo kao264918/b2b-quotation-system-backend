@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
 from app.models.rfq import RFQ, RFQVersion, RFQItem, RFQStatus, AccountingStatus, TaxSetting
-from app.models.vendor import Vendor
+from app.models.customer import Customer
 from app.schemas.rfq import (
     RFQCreate, RFQUpdate, RFQItemCreate, RFQStatusUpdate,
     VendorSnapshot, RFQListItemResponse
@@ -21,28 +21,29 @@ from app.services.rfq_number import generate_rfq_number
 from app.services.rfq_calculation import recalculate_rfq_item, calculate_item_totals
 
 
-def create_vendor_snapshot(vendor: Vendor) -> dict:
-    """Create vendor snapshot dict from Vendor model."""
-    primary_contact = None
-    primary_contact_phone = None
+def create_vendor_snapshot(vendor: Customer) -> dict:
+    """Create vendor snapshot dict from Customer model (acting as Vendor)."""
+    # Customer model currently has flat contact structure (contact_name, contact_email, etc.)
+    # The Vendor model had valid contacts list.
+    # Future: Customer might need contacts list. For now map flat fields.
     
-    if vendor.contacts:
-        for contact in vendor.contacts:
-            if contact.is_primary:
-                primary_contact = contact.name
-                primary_contact_phone = contact.phone
-                break
+    primary_contact_name = vendor.contact_name
+    primary_contact_phone = vendor.contact_phone
+    primary_contact_email = vendor.contact_email
     
     return {
         "id": vendor.id,
-        "name": vendor.name,
+        "name": vendor.company_name, # Snapshot expects name/company_name
         "company_name": vendor.company_name,
         "tax_id": vendor.tax_id,
-        "email": vendor.email,
-        "phone": vendor.phone,
-        "address": vendor.address,
-        "primary_contact_name": primary_contact,
+        "email": vendor.company_email or vendor.contact_email, # prefer company email if exists
+        "phone": vendor.contact_phone, # Use contact phone as main phone? or is there a company phone? Customer has contact_phone.
+        "address": vendor.address_line1,
+        "primary_contact_name": primary_contact_name,
         "primary_contact_phone": primary_contact_phone,
+        "primary_contact_email": primary_contact_email,
+        "currency": vendor.default_currency or "TWD",
+        "payment_terms": vendor.default_payment_terms
     }
 
 
@@ -55,10 +56,10 @@ def create_rfq(db: Session, *, obj_in: RFQCreate) -> RFQ:
     3. Create initial version with vendor snapshot
     4. Create items with calculations
     """
-    # Get vendor for snapshot
-    vendor = db.query(Vendor).filter(Vendor.id == obj_in.vendor_id).first()
+    # Get vendor (Customer) for snapshot
+    vendor = db.query(Customer).filter(Customer.id == obj_in.vendor_id).first()
     if not vendor:
-        raise ValueError(f"Vendor {obj_in.vendor_id} not found")
+        raise ValueError(f"Vendor (Customer) {obj_in.vendor_id} not found")
     
     # Generate RFQ number
     rfq_no = generate_rfq_number(db)

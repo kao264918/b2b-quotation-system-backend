@@ -31,6 +31,12 @@ def test_customer_flow():
     customer = resp.json()
     log(f"Created Customer: {customer['id']}")
     
+    # Verify role
+    if "customer" not in customer.get("roles", []):
+         log(f"Customer Role Verification Failed: {customer.get('roles')}", "ERROR")
+    else:
+         log("Customer Role Assignment Verified")
+
     # 2. Get Customer List
     resp = requests.get(f"{BASE_URL}/customers/?page=1&page_size=10")
     if resp.status_code != 200:
@@ -41,24 +47,37 @@ def test_customer_flow():
     return customer['id']
 
 def test_vendor_flow():
-    log("--- Testing Vendor Flow ---")
+    log("--- Testing Vendor Flow (via Unified Customer API) ---")
     suffix = int(time.time())
+    # Create vendor using Customer API with roles
     vendor_data = {
-        "name": f"Test Vendor {suffix}",
         "company_name": f"Test Vendor Corp {suffix}",
         "tax_id": f"123{suffix % 100000:05d}",
-        "email": f"vendor_{suffix}@test.com",
-        "status": "active"
+        "contact_name": f"Test Vendor {suffix}",
+        "contact_email": f"vendor_{suffix}@test.com",
+        "contact_phone": "0912345678",
+        "address_line1": "Vendor Address",
+        "city": "Taipei",
+        "country": "TW",
+        "status": "active",
+        "roles": ["vendor"]
     }
     
-    resp = requests.post(f"{BASE_URL}/vendors/", json=vendor_data)
+    resp = requests.post(f"{BASE_URL}/customers/", json=vendor_data)
     if resp.status_code != 200:
         # Check if 200 or 201
-        log(f"Create Vendor Failed: {resp.status_code} {resp.text}", "ERROR")
+        log(f"Create Vendor (Customer) Failed: {resp.status_code} {resp.text}", "ERROR")
         return None
         
     vendor = resp.json()
-    log(f"Created Vendor: {vendor['id']}")
+    log(f"Created Vendor (as Customer): {vendor['id']}")
+    
+    # Verify role
+    if "vendor" not in vendor.get("roles", []):
+         log(f"Vendor Role Verification Failed: {vendor.get('roles')}", "ERROR")
+    else:
+         log("Vendor Role Assignment Verified")
+
     return vendor['id']
 
 def test_catalog_flow():
