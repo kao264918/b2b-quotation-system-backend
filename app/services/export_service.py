@@ -46,32 +46,32 @@ def generate_pdf(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
     
     # 1. Header
     p.setFont(font_reg, 24)
-    p.drawString(2*cm, height - 3*cm, f"Quotation / 報價單")
+    p.drawString(2*cm, height - 3*cm, f"報價單")
     
     p.setFont(font_reg, 10)
-    p.drawString(2*cm, height - 4*cm, f"RFQ No: {rfq.rfq_no}")
+    p.drawString(2*cm, height - 4*cm, f"單號: {rfq.rfq_no}")
     if version.project_name:
-        p.drawString(2*cm, height - 4.5*cm, f"Project: {version.project_name}")
+        p.drawString(2*cm, height - 4.5*cm, f"專案: {version.project_name}")
 
-    p.drawString(12*cm, height - 4*cm, f"Date: {version.created_at.strftime('%Y-%m-%d')}")
-    p.drawString(12*cm, height - 4.5*cm, f"Version: v{version.version_number}")
+    p.drawString(12*cm, height - 4*cm, f"日期: {version.created_at.strftime('%Y-%m-%d')}")
+    p.drawString(12*cm, height - 4.5*cm, f"版本: v{version.version_number}")
 
     # 2. Vendor Info (Snapshot)
     v_snap = version.vendor_snapshot
     if v_snap:
-        p.drawString(2*cm, height - 6*cm, f"Vendor: {v_snap.get('company_name', '')}")
-        p.drawString(2*cm, height - 6.5*cm, f"Contact: {v_snap.get('primary_contact_name', '')}")
-        p.drawString(2*cm, height - 7*cm, f"Email: {v_snap.get('email', '')}")
+        p.drawString(2*cm, height - 6*cm, f"廠商: {v_snap.get('company_name', '')}")
+        p.drawString(2*cm, height - 6.5*cm, f"聯絡人: {v_snap.get('primary_contact_name', '')}")
+        p.drawString(2*cm, height - 7*cm, f"信箱: {v_snap.get('email', '')}")
 
     # 3. Items Table Header
     y_pos = height - 9*cm
     p.line(2*cm, y_pos - 0.2*cm, 19*cm, y_pos - 0.2*cm)
     
-    p.drawString(2*cm, y_pos, "Item / 項目")
-    p.drawString(8*cm, y_pos, "Spec / 規格")
-    p.drawString(12*cm, y_pos, "Qty / 數量")
-    p.drawString(14*cm, y_pos, "Unit Price / 單價")
-    p.drawString(17*cm, y_pos, "Amount / 金額")
+    p.drawString(2*cm, y_pos, "項目名稱")
+    p.drawString(8*cm, y_pos, "規格")
+    p.drawString(12*cm, y_pos, "數量")
+    p.drawString(14*cm, y_pos, "單價")
+    p.drawString(17*cm, y_pos, "金額")
     
     y_pos -= 1*cm
     
@@ -105,11 +105,11 @@ def generate_pdf(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
     # 5. Footer
     p.line(2*cm, y_pos + 0.5*cm, 19*cm, y_pos + 0.5*cm)
     p.setFont(font_reg, 12)
-    p.drawString(14*cm, y_pos - 1*cm, f"Total: {total:,.0f}")
+    p.drawString(14*cm, y_pos - 1*cm, f"總計: {total:,.0f}")
     
     p.setFont(font_reg, 10)
     if version.notes:
-        p.drawString(2*cm, y_pos - 3*cm, f"Notes: {version.notes}")
+        p.drawString(2*cm, y_pos - 3*cm, f"備註: {version.notes}")
 
     p.save()
     buffer.seek(0)
@@ -118,23 +118,23 @@ def generate_pdf(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
 def generate_excel(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Quotation"
+    ws.title = "報價單"
     
     # Headers
-    ws['A1'] = "Quotation / 報價單"
+    ws['A1'] = "報價單"
     ws['A1'].font = Font(size=20, bold=True)
     
-    ws['A3'] = "RFQ No:"
+    ws['A3'] = "單號:"
     ws['B3'] = rfq.rfq_no
     
-    ws['A4'] = "Project:"
+    ws['A4'] = "專案:"
     ws['B4'] = version.project_name
     
-    ws['D3'] = "Date:"
+    ws['D3'] = "日期:"
     ws['E3'] = version.created_at.strftime('%Y-%m-%d')
     
     # Table Header
-    headers = ["Item Name", "Description", "Quantity", "Unit", "Unit Price", "Amount"]
+    headers = ["項目名稱", "規格", "數量", "單位", "單價", "金額"]
     for col_num, header in enumerate(headers, 1):
         c = ws.cell(row=7, column=col_num)
         c.value = header
@@ -153,7 +153,7 @@ def generate_excel(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
         row_num += 1
         
     # Total
-    ws.cell(row=row_num+1, column=5, value="Total")
+    ws.cell(row=row_num+1, column=5, value="總計")
     ws.cell(row=row_num+1, column=6, value=version.total_amount)
     
     # Adjust widths

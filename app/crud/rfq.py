@@ -319,7 +319,11 @@ def revert_rfq(db: Session, *, rfq: RFQ, notes: str = "Reverted from finalized")
         raise ValueError("Can only revert from FINALIZED status")
     
     if not rfq.selected_version_id:
-        raise ValueError("No selected version to revert from")
+        # Fallback to current version if selected is missing (robustness)
+        rfq.selected_version_id = rfq.current_version_id
+        
+    if not rfq.selected_version_id:
+        raise ValueError("No version available to revert from")
     
     # Get the current final version
     final_version = get_version(db, rfq.selected_version_id)

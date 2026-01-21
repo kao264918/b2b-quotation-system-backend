@@ -24,6 +24,8 @@ from app.schemas.rfq import (
     RFQVersionResponse, RFQVersionSummary, RFQSelectVersion
 )
 from app.crud import rfq as rfq_crud
+from app.services import export_service
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
@@ -274,3 +276,64 @@ def update_accounting_status(
         raise HTTPException(status_code=404, detail="RFQ not found")
     
     return rfq_crud.update_accounting_status(db, rfq=rfq, accounting_status=status_in.accounting_status)
+
+
+@router.get("/{id}/export/pdf")
+def export_rfq_pdf(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+):
+    """Export RFQ to PDF (Latest/Selected Version)."""
+    rfq = rfq_crud.get_rfq(db, rfq_id=id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    # Determine version: Selected > Current
+    target_version_id = rfq.selected_version_id or rfq.current_version_id
+    if not target_version_id:
+         raise HTTPException(status_code=404, detail="No active version found for RFQ")
+         
+    version = rfq_crud.get_version(db, version_id=target_version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    pdf_buffer = export_service.generate_pdf(rfq, version)
+    
+    filename = f"RFQ-{rfq.rfq_no}-v{version.version_number}.pdf"
+    
+    return StreamingResponse(
+        pdf_buffer, 
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/{id}/export/excel")
+def export_rfq_excel(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+):
+    """Export RFQ to Excel (Latest/Selected Version)."""
+    rfq = rfq_crud.get_rfq(db, rfq_id=id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    target_version_id = rfq.selected_version_id or rfq.current_version_id
+    if not target_version_id:
+         raise HTTPException(status_code=404, detail="No active version found for RFQ")
+         
+    version = rfq_crud.get_version(db, version_id=target_version_id)
+    if not version:
+         raise HTTPException(status_code=404, detail="Version not found")
+
+    excel_buffer = export_service.generate_excel(rfq, version)
+    
+    filename = f"RFQ-{rfq.rfq_no}-v{version.version_number}.xlsx"
+    
+    return StreamingResponse(
+        excel_buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
