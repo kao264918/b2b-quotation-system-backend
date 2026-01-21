@@ -24,8 +24,37 @@ from app.schemas.rfq import (
     RFQVersionResponse, RFQVersionSummary, RFQSelectVersion
 )
 from app.crud import rfq as rfq_crud
+from app.services import export_service
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
+
+
+def validate_output_dims(items) -> list[dict]:
+    """
+    Validate that output-type items have both length_cm and width_cm.
+    Returns list of field-level errors for frontend bottom message mapping.
+    """
+    errors = []
+    for idx, item in enumerate(items):
+        item_dict = item.model_dump() if hasattr(item, 'model_dump') else item
+        if item_dict.get('item_type') == 'output':
+            # Check length/width presence (allow 0 if specific use case, but usually must be > 0. prompt says "missing", so falsy check is usually ok but 0 dim is weird)
+            # Pydantic schema allows 0 (ge=0).
+            # Requirement says "Missing".
+            # If 0 is valid, we should check for None. But usually dims cannot be 0.
+            # Let's check for None first. if 0 is passed, it is truthy False.
+            # Assuming dims > 0 is required.
+            l = item_dict.get('length_cm')
+            w = item_dict.get('width_cm')
+            if l is None or w is None or l == 0 or w == 0:
+                errors.append({
+                    "field": f"items[{idx}].dimensions",
+                    "item_id": item_dict.get('id'), # Return FE ID if provided
+                    "message": "輸出類型項目必須填寫長度與寬度",
+                    "item_name": item_dict.get('name', f'Item {idx+1}')
+                })
+    return errors
 
 
 @router.post("/", response_model=RFQResponse, status_code=201)
@@ -35,6 +64,14 @@ def create_rfq(
     rfq_in: RFQCreate
 ) -> Any:
     """Create a new RFQ with initial version."""
+    # B2: Validate output dims
+    dim_errors = validate_output_dims(rfq_in.items)
+    if dim_errors:
+        raise HTTPException(
+            status_code=400, 
+            detail={"message": "輸出類型項目缺少尺寸資料", "errors": dim_errors}
+        )
+    
     try:
         rfq = rfq_crud.create_rfq(db, obj_in=rfq_in)
         return rfq
@@ -150,6 +187,15 @@ def update_rfq(
     # Check if RFQ is in a locked status
     if rfq.status in ["finalized", "closed", "discarded"]:
         raise HTTPException(status_code=400, detail="Cannot modify a locked RFQ. Use Revert to re-open.")
+    
+    # B2: Validate output dims if items provided
+    if rfq_in.items:
+        dim_errors = validate_output_dims(rfq_in.items)
+        if dim_errors:
+            raise HTTPException(
+                status_code=400, 
+                detail={"message": "輸出類型項目缺少尺寸資料", "errors": dim_errors}
+            )
     
     try:
         rfq_crud.create_new_version(db, rfq=rfq, obj_in=rfq_in)
@@ -274,3 +320,78 @@ def update_accounting_status(
         raise HTTPException(status_code=404, detail="RFQ not found")
     
     return rfq_crud.update_accounting_status(db, rfq=rfq, accounting_status=status_in.accounting_status)
+
+
+@router.get("/{id}/export/pdf")
+def export_rfq_pdf(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+):
+    """Export RFQ to PDF (Latest/Selected Version)."""
+    rfq = rfq_crud.get_rfq(db, rfq_id=id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    # Determine version: Selected > Current
+    target_version_id = rfq.selected_version_id or rfq.current_version_id
+    if not target_version_id:
+         raise HTTPException(status_code=404, detail="No active version found for RFQ")
+         
+    version = rfq_crud.get_version(db, version_id=target_version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    pdf_buffer = export_service.generate_pdf(rfq, version)
+    
+    filename = f"{rfq.rfq_no}-v{version.version_number}.pdf"
+    
+    from urllib.parse import quote
+    
+    encoded_filename = quote(filename)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+        "Access-Control-Expose-Headers": "Content-Disposition"
+    }
+    
+    return StreamingResponse(
+        pdf_buffer, 
+        media_type="application/pdf",
+        headers=headers
+    )
+
+
+@router.get("/{id}/export/excel")
+def export_rfq_excel(
+    *,
+    db: Session = Depends(get_db),
+    id: str
+):
+    """Export RFQ to Excel (Latest/Selected Version)."""
+    rfq = rfq_crud.get_rfq(db, rfq_id=id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+    
+    target_version_id = rfq.selected_version_id or rfq.current_version_id
+    if not target_version_id:
+         raise HTTPException(status_code=404, detail="No active version found for RFQ")
+         
+    version = rfq_crud.get_version(db, version_id=target_version_id)
+    if not version:
+         raise HTTPException(status_code=404, detail="Version not found")
+
+    excel_buffer = export_service.generate_excel(rfq, version)
+    
+    filename = f"{rfq.rfq_no}-v{version.version_number}.xlsx"
+    
+    encoded_filename = quote(filename)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+        "Access-Control-Expose-Headers": "Content-Disposition"
+    }
+    
+    return StreamingResponse(
+        excel_buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers
+    )
