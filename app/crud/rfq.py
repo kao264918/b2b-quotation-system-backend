@@ -119,10 +119,10 @@ def create_rfq(db: Session, *, obj_in: RFQCreate) -> RFQ:
 
 
 def get_rfq(db: Session, rfq_id: str) -> Optional[RFQ]:
-    """Get RFQ by ID with eager loading of current version."""
+    """Get RFQ by ID with eager loading of current version. Excludes soft-deleted."""
     return db.query(RFQ).options(
         joinedload(RFQ.versions).joinedload(RFQVersion.items)
-    ).filter(RFQ.id == rfq_id).first()
+    ).filter(RFQ.id == rfq_id, RFQ.deleted_at.is_(None)).first()
 
 
 def get_rfq_by_no(db: Session, rfq_no: str) -> Optional[RFQ]:
@@ -138,10 +138,10 @@ def get_rfqs(
     search: Optional[str] = None,
     status: Optional[str] = None
 ) -> List[RFQ]:
-    """Get list of RFQs with optional filtering."""
+    """Get list of RFQs with optional filtering. Excludes soft-deleted."""
     query = db.query(RFQ).options(
         joinedload(RFQ.vendor)
-    )
+    ).filter(RFQ.deleted_at.is_(None))
     
     if search:
         search_term = f"%{search}%"
@@ -162,8 +162,8 @@ def count_rfqs(
     search: Optional[str] = None,
     status: Optional[str] = None
 ) -> int:
-    """Count RFQs with optional filtering."""
-    query = db.query(RFQ)
+    """Count RFQs with optional filtering. Excludes soft-deleted."""
+    query = db.query(RFQ).filter(RFQ.deleted_at.is_(None))
     
     if search:
         search_term = f"%{search}%"
@@ -208,6 +208,78 @@ def create_new_version(
     if not current:
         raise ValueError("Current version not found")
     
+    # -------------------------------------------------------------------------
+    # Diff Logic (Section 3.1)
+    # -------------------------------------------------------------------------
+    
+    # helper to check if items changed
+    def items_changed(new_items: List[RFQItemCreate], old_items: List[RFQItem]) -> bool:
+        if new_items is None:
+            return False # No new items provided means no change intended (or assume keep same)
+            
+        if len(new_items) != len(old_items):
+            return True
+            
+        # Compare each item (assuming order matters or sort by some key?)
+        # Frontend sends items in order.
+        # We need to compare field by field.
+        for i, new_item in enumerate(new_items):
+            old_item = old_items[i]
+            # Compare material fields
+            # Note: new_item is Pydantic, old_item is SQLAlchemy
+            # Check ID match if possible? No, strictly content.
+            if new_item.name != old_item.name: return True
+            if new_item.item_type != old_item.item_type: return True
+            if new_item.quantity != old_item.quantity: return True
+            if new_item.unit != old_item.unit: return True
+            if new_item.unit_price != old_item.unit_price: return True
+            # Handle optionals/None vs 0
+            if (new_item.length_cm or 0) != (old_item.length_cm or 0): return True
+            if (new_item.width_cm or 0) != (old_item.width_cm or 0): return True
+            if (new_item.spec_notes or "") != (old_item.spec_notes or ""): return True
+            
+        return False
+
+    has_item_changes = obj_in.items is not None and items_changed(obj_in.items, current.items)
+    
+    # Check header changes
+    new_tax = obj_in.tax_setting if obj_in.tax_setting is not None else current.tax_setting
+    tax_changed = new_tax != current.tax_setting
+    
+    new_project_name = obj_in.project_name if obj_in.project_name is not None else current.project_name
+    name_changed = new_project_name != current.project_name
+    
+    new_date = obj_in.required_date if obj_in.required_date is not None else current.required_date
+    date_changed = new_date != current.required_date
+    
+    # Check if ANY material change exists
+    if not (has_item_changes or tax_changed or name_changed or date_changed):
+        # No material changes, return current version (Idempotency)
+        return current
+
+    # -------------------------------------------------------------------------
+    # Auto-Notes Logic (Section 3.2)
+    # -------------------------------------------------------------------------
+    system_notes = []
+    if tax_changed:
+        system_notes.append("Tax Change") # Explicit tax log
+    if has_item_changes:
+        system_notes.append("Updated Line Items") # Separate item log
+    if name_changed:
+        system_notes.append("Project Name Change")
+        
+    final_notes = obj_in.notes or ""
+    if system_notes:
+        auto_note = f"[{', '.join(system_notes)}]"
+        if final_notes:
+            final_notes = f"{auto_note} {final_notes}"
+        else:
+            final_notes = auto_note
+
+    # -------------------------------------------------------------------------
+    # Create Version
+    # -------------------------------------------------------------------------
+
     # Get latest version number
     latest = db.query(RFQVersion).filter(
         RFQVersion.rfq_id == rfq.id
@@ -219,10 +291,10 @@ def create_new_version(
         rfq_id=rfq.id,
         version_number=next_version,
         vendor_snapshot=current.vendor_snapshot,  # Keep same vendor
-        project_name=obj_in.project_name or current.project_name,
-        required_date=obj_in.required_date if obj_in.required_date is not None else current.required_date,
-        tax_setting=obj_in.tax_setting or current.tax_setting,
-        notes=obj_in.notes,  # Required for new versions
+        project_name=new_project_name,
+        required_date=new_date,
+        tax_setting=new_tax,
+        notes=final_notes, 
     )
     db.add(version)
     db.flush()
@@ -234,8 +306,15 @@ def create_new_version(
         for idx, item_in in enumerate(obj_in.items):
             item_dict = item_in.model_dump()
             item_dict["sort_order"] = idx
+            # validata_output_dims called in router, so we assume valid or allow DB to enforce?
+            # Router validated it because we have id/mapping requirement.
+            
             item_dict = recalculate_rfq_item(item_dict)
             
+            # Remove 'id' if present in model_dump (it's for validation mapping only)
+            if 'id' in item_dict:
+                del item_dict['id']
+
             item = RFQItem(rfq_version_id=version.id, **item_dict)
             db.add(item)
             items_data.append(item_dict)
@@ -270,8 +349,33 @@ def create_new_version(
     
     # Update RFQ current version
     rfq.current_version_id = version.id
-    if obj_in.project_name:
-        rfq.project_name = obj_in.project_name
+    if name_changed:
+        rfq.project_name = new_project_name
+    
+    # B4: Log audit trail for tax setting changes
+    # (We already handle "Tax Change" in notes, but keeping the explicit Entity Audit Log is good too as requested)
+    if tax_changed:
+        from app.crud import audit_log
+        tax_labels = {
+            "taxable_5": "應稅 (5%)",
+            "taxable_10": "應稅 (10%)",
+            "non_taxable": "未稅 (0%)",
+            "tax_exempt": "免稅"
+        }
+        old_label = tax_labels.get(current.tax_setting, current.tax_setting)
+        new_label = tax_labels.get(new_tax, new_tax)
+        audit_log.log_action(
+            db,
+            entity_type="rfq",
+            entity_id=rfq.id,
+            action="update",
+            changes={
+                "field": "稅金設定",
+                "old_value": old_label,
+                "new_value": new_label,
+                "version": next_version
+            }
+        )
     
     db.commit()
     db.refresh(version)
@@ -401,17 +505,16 @@ def update_accounting_status(db: Session, *, rfq: RFQ, accounting_status: str) -
 
 def delete_rfq(db: Session, rfq_id: str) -> bool:
     """
-    Delete RFQ and all versions.
-    Only allowed in DRAFT or VENDOR_QUOTING status.
+    Soft delete RFQ (set deleted_at timestamp).
+    Any status can be deleted per Master Spec.
     """
-    rfq = db.query(RFQ).filter(RFQ.id == rfq_id).first()
+    from datetime import datetime, timezone
+    
+    rfq = db.query(RFQ).filter(RFQ.id == rfq_id, RFQ.deleted_at.is_(None)).first()
     if not rfq:
         return False
     
-    # Check if deletable
-    if rfq.status not in [RFQStatus.DRAFT.value, RFQStatus.VENDOR_QUOTING.value]:
-        raise ValueError(f"Cannot delete RFQ in {rfq.status} status")
-    
-    db.delete(rfq)
+    # Soft delete: set deleted_at timestamp
+    rfq.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return True

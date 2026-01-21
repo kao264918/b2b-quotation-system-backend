@@ -43,6 +43,7 @@ class RFQItemBase(BaseModel):
 
 class RFQItemCreate(RFQItemBase):
     """Create a new item directly"""
+    id: Optional[str] = None  # Temporary ID from frontend for validation mapping
     catalog_item_id: Optional[str] = None
     sort_order: int = 0
 

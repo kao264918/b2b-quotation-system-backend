@@ -1,5 +1,6 @@
 from typing import List
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, func  # Added imports here
 from app.crud.base import CRUDBase
 from app.models.customer import Customer
 from app.schemas.customer import CustomerCreate, CustomerUpdate
@@ -9,48 +10,80 @@ class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
     """CRUD operations for Customer with spec-compliant behaviors"""
 
     def get_multi_by_role(
-        self, db: Session, *, role: str, status: str = "active", skip: int = 0, limit: int = 100
+        self, db: Session, *, role: str, status: str = "active", search: str = None, skip: int = 0, limit: int = 100
     ) -> List[Customer]:
-        """Get customers filtered by role and status"""
-        # Using simple string contains for JSON list since it's exact match string in list
-        # For Postgres JSONB: .filter(self.model.roles.contains([role]))
-        # For SQLite (dev): might need custom handling if JSON not fully supported, but SQLAlchemy usually handles it.
-        # Assuming Postgres for prod, but local might be SQLite?
-        # Let's try flexible approach or standard contains.
-        return (
-            db.query(self.model)
-            .filter(self.model.status == status)
-            .filter(func.json_each(self.model.roles).value == role)  # This works for SQLite JSON1
-            # .filter(self.model.roles.contains([role])) # This is for Postgres JSONB
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        """Get customers filtered by role and status, optionally search by name/tax_id"""
+        query = db.query(self.model).filter(self.model.status == status)
+        
+        # Role filter (SQLite specific currently)
+        query = query.filter(func.json_each(self.model.roles).value == role)
+        
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    self.model.company_name.ilike(search_pattern),
+                    self.model.tax_id.ilike(search_pattern),
+                    self.model.contact_name.ilike(search_pattern),
+                    self.model.contact_email.ilike(search_pattern),
+                )
+            )
+            
+        return query.offset(skip).limit(limit).all()
 
-    def count_by_role(self, db: Session, *, role: str, status: str = "active") -> int:
+    def count_by_role(self, db: Session, *, role: str, status: str = "active", search: str = None) -> int:
         """Count customers filtered by role and status"""
-        return (
-            db.query(self.model)
-            .filter(self.model.status == status)
-            .filter(func.json_each(self.model.roles).value == role)
-            .count()
-        )
+        query = db.query(self.model).filter(self.model.status == status)
+        query = query.filter(func.json_each(self.model.roles).value == role)
+        
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    self.model.company_name.ilike(search_pattern),
+                    self.model.tax_id.ilike(search_pattern),
+                    self.model.contact_name.ilike(search_pattern),
+                    self.model.contact_email.ilike(search_pattern),
+                )
+            )
+            
+        return query.count()
 
     def get_multi_active(
-        self, db: Session, skip: int = 0, limit: int = 100
+        self, db: Session, search: str = None, skip: int = 0, limit: int = 100
     ) -> List[Customer]:
         """Get only active customers (default list behavior per spec)"""
-        return (
-            db.query(self.model)
-            .filter(self.model.status == "active")
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        query = db.query(self.model).filter(self.model.status == "active")
+        
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    self.model.company_name.ilike(search_pattern),
+                    self.model.tax_id.ilike(search_pattern),
+                    self.model.contact_name.ilike(search_pattern),
+                    self.model.contact_email.ilike(search_pattern),
+                )
+            )
+            
+        return query.offset(skip).limit(limit).all()
 
-    def count_active(self, db: Session) -> int:
+    def count_active(self, db: Session, search: str = None) -> int:
         """Count active customers for pagination"""
-        return db.query(self.model).filter(self.model.status == "active").count()
+        query = db.query(self.model).filter(self.model.status == "active")
+        
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    self.model.company_name.ilike(search_pattern),
+                    self.model.tax_id.ilike(search_pattern),
+                    self.model.contact_name.ilike(search_pattern),
+                    self.model.contact_email.ilike(search_pattern),
+                )
+            )
+            
+        return query.count()
 
     def get_multi_inactive(
         self, db: Session, skip: int = 0, limit: int = 100
