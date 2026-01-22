@@ -419,8 +419,9 @@ def revert_rfq(db: Session, *, rfq: RFQ, notes: str = "Reverted from finalized")
     
     Precondition: RFQ must be in FINALIZED status.
     """
-    if rfq.status != RFQStatus.FINALIZED.value:
-        raise ValueError("Can only revert from FINALIZED status")
+    allowed_for_revert = [RFQStatus.FINALIZED.value, RFQStatus.CLOSED.value, RFQStatus.DISCARDED.value]
+    if rfq.status not in allowed_for_revert:
+        raise ValueError("Can only revert from FINALIZED, CLOSED, or DISCARDED status")
     
     if not rfq.selected_version_id:
         # Fallback to current version if selected is missing (robustness)
