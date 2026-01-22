@@ -6,7 +6,11 @@ from app.config import settings
 # connect_args={"check_same_thread": False} is needed only for SQLite
 engine = create_engine(
     settings.DATABASE_URL,
-    echo=False
+    echo=False,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=5,
+    max_overflow=10
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
