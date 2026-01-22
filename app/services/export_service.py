@@ -10,156 +10,255 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
 from app.models.rfq import RFQ, RFQVersion
 
-def register_fonts():
-    """Attempt to register a CJK font."""
-    # List of candidate font paths (Mac, generic Linux, etc.)
-    font_paths = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-    ]
-    
-    available_font = "Helvetica" # Default
-    
-    for path in font_paths:
-        try:
-            # Note: reportlab might need 'tc' index for ttc files
-            # Just try registering it as a name
-            font_name = "CJKFont"
-            pdfmetrics.registerFont(TTFont(font_name, path))
-            available_font = font_name
-            break
-        except Exception:
-            continue
-            
-    return available_font
+import subprocess
+import tempfile
+import os
 
 def generate_pdf(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
-    buffer = io.BytesIO()
-    p = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
+    """
+    Generates a PDF by first creating the Excel file (single source of truth)
+    and then converting it to PDF using LibreOffice (soffice).
+    """
+    # 1. Generate Excel first (Byte Stream)
+    excel_stream = generate_excel(rfq, version)
     
-    # Fonts
-    font_reg = register_fonts()
-    p.setFont(font_reg, 12)
-    
-    # 1. Header
-    p.setFont(font_reg, 24)
-    p.drawString(2*cm, height - 3*cm, f"報價單")
-    
-    p.setFont(font_reg, 10)
-    p.drawString(2*cm, height - 4*cm, f"單號: {rfq.rfq_no}")
-    if version.project_name:
-        p.drawString(2*cm, height - 4.5*cm, f"專案: {version.project_name}")
-
-    p.drawString(12*cm, height - 4*cm, f"日期: {version.created_at.strftime('%Y-%m-%d')}")
-    p.drawString(12*cm, height - 4.5*cm, f"版本: v{version.version_number}")
-
-    # 2. Vendor Info (Snapshot)
-    v_snap = version.vendor_snapshot
-    if v_snap:
-        p.drawString(2*cm, height - 6*cm, f"廠商: {v_snap.get('company_name', '')}")
-        p.drawString(2*cm, height - 6.5*cm, f"聯絡人: {v_snap.get('primary_contact_name', '')}")
-        p.drawString(2*cm, height - 7*cm, f"信箱: {v_snap.get('email', '')}")
-
-    # 3. Items Table Header
-    y_pos = height - 9*cm
-    p.line(2*cm, y_pos - 0.2*cm, 19*cm, y_pos - 0.2*cm)
-    
-    p.drawString(2*cm, y_pos, "項目名稱")
-    p.drawString(8*cm, y_pos, "規格")
-    p.drawString(12*cm, y_pos, "數量")
-    p.drawString(14*cm, y_pos, "單價")
-    p.drawString(17*cm, y_pos, "金額")
-    
-    y_pos -= 1*cm
-    
-    # 4. Items
-    total = 0
-    for item in version.items:
-        # Simple text wrapping could be added here, but for now just truncate or overlap
-        name = item.name or ""
-        p.drawString(2*cm, y_pos, name[:20]) # Limit chars
-        
-        spec = item.description or ""
-        p.drawString(8*cm, y_pos, spec[:15])
-        
-        qty_str = f"{item.quantity} {item.unit}"
-        p.drawString(12*cm, y_pos, qty_str)
-        
-        price = item.unit_price or 0
-        p.drawString(14*cm, y_pos, f"{price:,.0f}")
-        
-        subtotal = item.line_subtotal or 0
-        p.drawString(17*cm, y_pos, f"{subtotal:,.0f}")
-        
-        total += subtotal
-        y_pos -= 0.8*cm
-        
-        if y_pos < 3*cm:
-            p.showPage()
-            p.setFont(font_reg, 10)
-            y_pos = height - 3*cm
+    # 2. Save to temporary file
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        xlsx_path = os.path.join(tmpdirname, "temp_quote.xlsx")
+        with open(xlsx_path, "wb") as f:
+            f.write(excel_stream.getvalue())
             
-    # 5. Footer
-    p.line(2*cm, y_pos + 0.5*cm, 19*cm, y_pos + 0.5*cm)
-    p.setFont(font_reg, 12)
-    p.drawString(14*cm, y_pos - 1*cm, f"總計: {total:,.0f}")
-    
-    p.setFont(font_reg, 10)
-    if version.notes:
-        p.drawString(2*cm, y_pos - 3*cm, f"備註: {version.notes}")
+        # 3. Run LibreOffice conversion
+        # Command: soffice --headless --convert-to pdf --outdir <dir> <file>
+        soffice_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+        if not os.path.exists(soffice_path):
+             # Fallback check for linux/standard path if needed, 
+             # but user environment is Mac and we installed it there.
+             soffice_path = "soffice" 
 
-    p.save()
-    buffer.seek(0)
-    return buffer
+        cmd = [
+            soffice_path,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            tmpdirname,
+            xlsx_path
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # 4. Read the resulting PDF
+            # LibreOffice keeps the same basename: temp_quote.pdf
+            pdf_path = os.path.join(tmpdirname, "temp_quote.pdf")
+            if os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_content = f.read()
+                return io.BytesIO(pdf_content)
+            else:
+                raise Exception("PDF file was not generated by LibreOffice")
+                
+        except subprocess.CalledProcessError as e:
+            print(f"LibreOffice conversion failed: {e.stderr.decode()}")
+            raise Exception("Failed to convert Excel to PDF")
+
 
 def generate_excel(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "報價單"
+    # Load template
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    template_path = os.path.join(base_dir, "app", "assets", "quote_template.xlsx")
     
-    # Headers
-    ws['A1'] = "報價單"
-    ws['A1'].font = Font(size=20, bold=True)
-    
-    ws['A3'] = "單號:"
-    ws['B3'] = rfq.rfq_no
-    
-    ws['A4'] = "專案:"
-    ws['B4'] = version.project_name
-    
-    ws['D3'] = "日期:"
-    ws['E3'] = version.created_at.strftime('%Y-%m-%d')
-    
-    # Table Header
-    headers = ["項目名稱", "規格", "數量", "單位", "單價", "金額"]
-    for col_num, header in enumerate(headers, 1):
-        c = ws.cell(row=7, column=col_num)
-        c.value = header
-        c.font = Font(bold=True)
-        c.border = Border(bottom=Side(style='thin'))
+    try:
+        wb = openpyxl.load_workbook(template_path)
+        ws = wb.active
+    except Exception as e:
+        print(f"Error loading template: {e}")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "報價單"
+
+    # Remove extra sheets (Sheet Cleanup) & Rename Active Sheet
+    if len(wb.sheetnames) > 1:
+        for sheet_name in wb.sheetnames:
+            if sheet_name != ws.title:
+                del wb[sheet_name]
+
+    # Rename active sheet: "MMDD CustomerName"
+    # Format MMDD
+    mmdd = version.created_at.strftime('%m%d')
+    cust_name = rfq.vendor.company_name if rfq.vendor else "Unknown"
+    new_sheet_name = f"{mmdd} {cust_name}"
+    # Excel sheet name limit is 31 chars
+    ws.title = new_sheet_name[:31]
+
+    # Helper to safely set cell value (handles merged cells)
+    def safe_write(arg1, arg2, arg3=None):
+        # Overload: (coord, value) or (row, col, value)
+        # Check if arg1 is int -> (row, col, value)
+        if isinstance(arg1, int):
+            row, col, value = arg1, arg2, arg3
+            cell = ws.cell(row=row, column=col)
+        else:
+            # (coord, value)
+            coord, value = arg1, arg2
+            cell = ws[coord]
         
-    # Items
-    row_num = 8
-    for item in version.items:
-        ws.cell(row=row_num, column=1, value=item.name)
-        ws.cell(row=row_num, column=2, value=item.description)
-        ws.cell(row=row_num, column=3, value=item.quantity)
-        ws.cell(row=row_num, column=4, value=item.unit)
-        ws.cell(row=row_num, column=5, value=item.unit_price)
-        ws.cell(row=row_num, column=6, value=item.line_subtotal)
-        row_num += 1
+        # Check if cell is merged
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+             for merged_range in ws.merged_cells.ranges:
+                 if merged_range.min_row == cell.row and merged_range.min_col == cell.column:
+                     # This IS the top-left cell, just write
+                     cell.value = value
+                     return
+                 elif cell.coordinate in merged_range:
+                     # Write to top left
+                     top_left_cell = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
+                     top_left_cell.value = value
+                     return
+        else:
+             cell.value = value
+    
+    # Search and Clear Logic for "展期" and "地點"
+    # Scanning first 20 rows, first 15 columns
+    for r in range(1, 21):
+        for c in range(1, 16):
+            cell = ws.cell(row=r, column=c)
+            # Read value (handling merged cells read if possible, but raw read is fine for search)
+            val = cell.value
+            if val and isinstance(val, str):
+                if "展期" in val or "地點" in val:
+                    # Clear the cell to the RIGHT (c+1)
+                    # We use safe_write to handle merged cells on the right
+                    safe_write(r, c + 1, None)
+
+    # Header Info
+    safe_write('J5', version.created_at.strftime('%Y.%m.%d'))
+    
+    if rfq.vendor:
+        safe_write('J6', rfq.vendor.company_name)
+        safe_write('J7', rfq.vendor.tax_id or "")
+        safe_write('J8', rfq.vendor.contact_phone or "")
+        safe_write('J9', rfq.vendor.contact_name or "")
         
-    # Total
-    ws.cell(row=row_num+1, column=5, value="總計")
-    ws.cell(row=row_num+1, column=6, value=version.total_amount)
+    # New Locations
+    safe_write('L1', rfq.rfq_no)
+    safe_write('I2', version.project_name)
     
-    # Adjust widths
-    ws.column_dimensions['A'].width = 30
-    ws.column_dimensions['B'].width = 30
+    # Items Table starts at Row 17
+    # Items Table starts at Row 17
+    # Note: We do NOT unmerge strictly anymore, as per user request to utilize template merges.
+    # However, if items exceed template area, behaviour falls back to single row.
+
+    start_row = 17
+    current_row = start_row
     
+    # Helper to calculate row span based on Item No column (Col 5) vertical merge
+    def get_row_span(row_idx):
+        cell_coord = f"E{row_idx}"
+        for merged_range in ws.merged_cells.ranges:
+             if cell_coord in merged_range and merged_range.min_row == row_idx:
+                 # It is the start of a merge
+                 return merged_range.max_row - merged_range.min_row + 1
+        return 1
+
+    # Clear existing rows broadly (content only)
+    # We use safe_write with None which respects merges and just clears value
+    for r in range(17, 60):
+        for c in range(1, 15):
+             safe_write(r, c, None)
+
+    for idx, item in enumerate(version.items, 1):
+        # Calculate span available in template for this item
+        span = get_row_span(current_row)
+        
+        # E(5): No (Write to Top-Left)
+        safe_write(current_row, 5, str(idx))
+        
+        # F(6): Type
+        type_map = {'product': '產品', 'service': '服務', 'output': '輸出'}
+        t_str = type_map.get(item.item_type, item.item_type)
+        safe_write(current_row, 6, t_str)
+        
+        # Auto-merge helper for non-split columns (Type, Qty, Price, Total)
+        def ensure_vertical_merge(col_idx, start_r, span_len):
+            if span_len < 2: return
+            end_r = start_r + span_len - 1
+            # Check if likely already merged (simplified check: is start merged?)
+            cell = ws.cell(row=start_r, column=col_idx)
+            if isinstance(cell, openpyxl.cell.cell.MergedCell):
+                # Already part of a merge (assume correct)
+                return
+            
+            # Check if it IS a merge start
+            is_merge_start = False
+            for rng in ws.merged_cells.ranges:
+                if rng.min_row == start_r and rng.min_col == col_idx and rng.max_row >= end_r:
+                    is_merge_start = True
+                    break
+            
+            if not is_merge_start:
+                # Merge it! (ignoring existing content in covered cells which should be empty/cleared)
+                try:
+                    ws.merge_cells(start_row=start_r, start_column=col_idx, end_row=end_r, end_column=col_idx)
+                    # Re-center alignment usually needed after merge? Template style should persist on top-left.
+                except Exception as e:
+                    print(f"Merge error at {start_r},{col_idx}: {e}")
+
+        if span >= 2:
+            ensure_vertical_merge(6, current_row, span) # Type
+            ensure_vertical_merge(10, current_row, span) # Qty
+            ensure_vertical_merge(11, current_row, span) # Price
+            ensure_vertical_merge(12, current_row, span) # Total
+        
+        # Name and Spec Logic based on Span
+        # G(7) is the target column for Name/Spec (merged width G-I usually)
+        
+        if span >= 2:
+            # Multi-row layout
+            # Row 1 (current_row): Name
+            safe_write(current_row, 7, item.name)
+            
+            # Row 2 (current_row + 1): Spec
+            # Check if Row 2 exists in span (it should)
+            safe_write(current_row + 1, 7, item.description or "")
+            
+            # If span > 2, extra rows are empty for now
+        else:
+            # Single-row layout: Concatenate Name + Spec
+            full_text = item.name
+            if item.description:
+                 full_text += f"\n{item.description}"
+            safe_write(current_row, 7, full_text)
+        
+        # J(10): Qty
+        safe_write(current_row, 10, item.quantity)
+        
+        # K(11): Unit Price
+        safe_write(current_row, 11, item.unit_price)
+        
+        # L(12): Subtotal
+        safe_write(current_row, 12, item.line_subtotal)
+        
+        # Move to next item position
+        current_row += span
+        
+    # Financial Totals (Rows 49, 50, 51 Only)
+    # K: Label, L: Value (with NT$)
+    
+    def fmt_price(val):
+        return f"NT$ {val:,.0f}"
+
+    safe_write(49, 11, "小計:")
+    safe_write(49, 12, fmt_price(version.subtotal))
+    
+    safe_write(50, 11, "稅金:")
+    safe_write(50, 12, fmt_price(version.tax_amount))
+    
+    safe_write(51, 11, "總計:")
+    safe_write(51, 12, fmt_price(version.total_amount))
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)

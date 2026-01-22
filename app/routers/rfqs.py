@@ -16,6 +16,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 import math
+from urllib.parse import quote
 
 from app.database import get_db
 from app.schemas.rfq import (
@@ -342,23 +343,28 @@ def export_rfq_pdf(
     if not version:
         raise HTTPException(status_code=404, detail="Version not found")
 
-    pdf_buffer = export_service.generate_pdf(rfq, version)
-    
-    filename = f"{rfq.rfq_no}-v{version.version_number}.pdf"
-    
-    from urllib.parse import quote
-    
-    encoded_filename = quote(filename)
-    headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
-        "Access-Control-Expose-Headers": "Content-Disposition"
-    }
-    
-    return StreamingResponse(
-        pdf_buffer, 
-        media_type="application/pdf",
-        headers=headers
-    )
+    try:
+        pdf_buffer = export_service.generate_pdf(rfq, version)
+        
+        filename = f"{rfq.rfq_no}-v{version.version_number}.pdf"
+        
+        # from urllib.parse import quote # Already imported at top level
+        
+        encoded_filename = quote(filename)
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+        
+        return StreamingResponse(
+            pdf_buffer, 
+            media_type="application/pdf",
+            headers=headers
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"PDF Export failed: {str(e)}")
 
 
 @router.get("/{id}/export/excel")
@@ -380,18 +386,23 @@ def export_rfq_excel(
     if not version:
          raise HTTPException(status_code=404, detail="Version not found")
 
-    excel_buffer = export_service.generate_excel(rfq, version)
-    
-    filename = f"{rfq.rfq_no}-v{version.version_number}.xlsx"
-    
-    encoded_filename = quote(filename)
-    headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
-        "Access-Control-Expose-Headers": "Content-Disposition"
-    }
-    
-    return StreamingResponse(
-        excel_buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers
-    )
+    try:
+        excel_buffer = export_service.generate_excel(rfq, version)
+        
+        filename = f"{rfq.rfq_no}-v{version.version_number}.xlsx"
+        
+        encoded_filename = quote(filename)
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+        
+        return StreamingResponse(
+            excel_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
