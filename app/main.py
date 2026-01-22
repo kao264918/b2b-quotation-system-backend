@@ -19,6 +19,7 @@ app.add_middleware(
         "http://localhost:5176",
         "http://localhost:3000",
         "https://dev-b2b-quotation-system.vercel.app",
+        "https://b2b-quotation-system.vercel.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel preview domains
     allow_credentials=True,
