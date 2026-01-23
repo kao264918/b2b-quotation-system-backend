@@ -20,8 +20,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Add missing columns that were commented out in 96c4ff4f672d
-    op.add_column('customers', sa.Column('default_currency', sa.String(), nullable=True, server_default='TWD'))
-    op.add_column('customers', sa.Column('default_payment_terms', sa.String(), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = [c['name'] for c in inspector.get_columns('customers')]
+
+    if 'default_currency' not in columns:
+        op.add_column('customers', sa.Column('default_currency', sa.String(), nullable=True, server_default='TWD'))
+    
+    if 'default_payment_terms' not in columns:
+        op.add_column('customers', sa.Column('default_payment_terms', sa.String(), nullable=True))
 
 
 def downgrade() -> None:
