@@ -134,10 +134,10 @@ def generate_excel(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
                     safe_write(r, c + 1, None)
 
     # Header Info
-    safe_write('J5', version.created_at.strftime('%Y.%m.%d'))
+    safe_write('J5', version.created_at.strftime('%Y/%m/%d'))
     
     if rfq.vendor:
-        safe_write('J6', rfq.vendor.company_name)
+        safe_write('J6', rfq.vendor.company_name) # Vendor Name
         safe_write('J7', rfq.vendor.tax_id or "")
         safe_write('J8', rfq.vendor.contact_phone or "")
         safe_write('J9', rfq.vendor.contact_name or "")
@@ -145,8 +145,16 @@ def generate_excel(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
     # New Locations
     safe_write('L1', rfq.rfq_no)
     safe_write('I2', version.project_name)
+
+    # Overwrite Headers with Chinese (Row 16)
+    # E: No, F: Type, G: Description, J: Qty, K: Price, L: Amount
+    safe_write(16, 5, "項次")
+    safe_write(16, 6, "類型")
+    safe_write(16, 7, "項目說明") # Merged G-I
+    safe_write(16, 10, "數量")
+    safe_write(16, 11, "單價")
+    safe_write(16, 12, "金額")
     
-    # Items Table starts at Row 17
     # Items Table starts at Row 17
     # Note: We do NOT unmerge strictly anymore, as per user request to utilize template merges.
     # However, if items exceed template area, behaviour falls back to single row.
@@ -222,14 +230,14 @@ def generate_excel(rfq: RFQ, version: RFQVersion) -> io.BytesIO:
             
             # Row 2 (current_row + 1): Spec
             # Check if Row 2 exists in span (it should)
-            safe_write(current_row + 1, 7, item.description or "")
+            safe_write(current_row + 1, 7, item.spec_notes or "")
             
             # If span > 2, extra rows are empty for now
         else:
             # Single-row layout: Concatenate Name + Spec
             full_text = item.name
-            if item.description:
-                 full_text += f"\n{item.description}"
+            if item.spec_notes:
+                 full_text += f"\n{item.spec_notes}"
             safe_write(current_row, 7, full_text)
         
         # J(10): Qty
