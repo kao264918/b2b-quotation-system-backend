@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List
 
-from sqlalchemy import String, DateTime, Numeric, ForeignKey, Text
+from sqlalchemy import String, DateTime, Numeric, ForeignKey, Text, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -13,11 +13,16 @@ class Quote(Base):
     __tablename__ = "quotes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    rfq_id: Mapped[str] = mapped_column(ForeignKey("rfqs.id"), nullable=False)
+    rfq_id: Mapped[str | None] = mapped_column(ForeignKey("rfqs.id"), nullable=True)  # Nullable for standalone quotes
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
     
     title: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="draft") # draft, sent, accepted, rejected, expired
+    quote_number: Mapped[str] = mapped_column(String, unique=True, nullable=False, default=lambda: f"QUO-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}")
+    
+    # Status fields
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft, confirmed, closed, discarded
+    accounting_status: Mapped[str | None] = mapped_column(String, nullable=True)  # unpaid, paid (null for draft)
+    version: Mapped[int] = mapped_column(Integer, default=1)  # Version number for tracking changes
     
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
