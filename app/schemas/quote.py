@@ -2,6 +2,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.schemas.customer import Customer
 
 class QuoteItemBase(BaseModel):
     name: str
@@ -33,7 +37,7 @@ class QuoteItem(QuoteItemBase):
 
 class QuoteBase(BaseModel):
     title: str
-    rfq_id: str
+    rfq_id: Optional[str] = None  # Optional for standalone quote creation
     customer_id: str
     status: str = "draft"
     
@@ -51,13 +55,42 @@ class QuoteUpdate(BaseModel):
     title: Optional[str] = None
     valid_until: Optional[datetime] = None
     notes: Optional[str] = None
-    status: Optional[str] = None # Restricted transitions
+    subtotal: Optional[Decimal] = None
+    tax_total: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+    items: Optional[List[QuoteItemCreate]] = None
+
+# Status update payloads
+class QuoteStatusUpdate(BaseModel):
+    """Update quotation status (draft/confirmed/closed/discarded)"""
+    status: str
+
+class QuoteAccountingStatusUpdate(BaseModel):
+    """Update accounting status (unpaid/paid)"""
+    accounting_status: str
+
+# Audit log schema
+class QuoteAuditLog(BaseModel):
+    id: str
+    action: str
+    category: str  # 建立報價單, 更新項目內容, 更新稅務設定, 狀態變更, 會計狀態變更, 重啟報價
+    timestamp: datetime
+    actor: Optional[str] = None
+    changes: Optional[dict] = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
 class Quote(QuoteBase):
     id: str
+    quote_number: str
+    accounting_status: Optional[str] = None
+    version: int = 1
     created_at: datetime
     updated_at: datetime
     sent_at: Optional[datetime] = None
     items: List[QuoteItem] = []
+    
+    # Relationships
+    customer: Optional["Customer"] = None
     
     model_config = ConfigDict(from_attributes=True)

@@ -13,14 +13,18 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    invoice_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # INV-YYMM-XXXX
     quote_id: Mapped[str] = mapped_column(ForeignKey("quotes.id"), nullable=False)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
     
-    status: Mapped[str] = mapped_column(String, default="draft") # draft, issued, paid, overdue, cancelled
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft, issued, paid, void
+    accounting_status: Mapped[str | None] = mapped_column(String, nullable=True)  # unpaid, paid
     
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -28,6 +32,7 @@ class Invoice(Base):
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # Soft delete
 
     # Relationships
     items: Mapped[List["InvoiceItem"]] = relationship(back_populates="invoice", cascade="all, delete-orphan")
