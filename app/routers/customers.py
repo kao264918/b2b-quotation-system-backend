@@ -32,7 +32,11 @@ def read_customers(
         # checking if status is 'all' we might need another CRUD method or adjust logic.
         # For Package 1, we mostly care about fetching active vendors.
         effective_status = status if status != "all" else "active" # For now, default to active if all requested for role search to avoid complexity
+        
+        print(f"DEBUG: Searching customers role={role} status={effective_status} search={search}")
         items = crud.customer.get_multi_by_role(db, role=role, status=effective_status, search=search, skip=skip, limit=limit)
+        print(f"DEBUG: Found {len(items)} items")
+        
         total = crud.customer.count_by_role(db, role=role, status=effective_status, search=search)
     elif status == "inactive":
         # Inactive list usually doesn't need heavy search, but good to have. Adapted if needed.

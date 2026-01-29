@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Any
 from app.crud.base import CRUDBase
 from app.models.quote import Quote, QuoteItem
 from app.models.audit_log import AuditLog
@@ -30,11 +31,35 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         obj_data = obj_in.model_dump()
         items_data = obj_data.pop("items", [])
         
-        # Auto-generate quote_number if not provided
+        # Auto-generate quote_number with monthly sequence
         if "quote_number" not in obj_data or not obj_data.get("quote_number"):
             date_prefix = datetime.now().strftime("%y%m")
-            seq = uuid.uuid4().hex[:4].upper()
-            obj_data["quote_number"] = f"QUO-{date_prefix}-{seq}"
+            prefix = f"QUO-{date_prefix}-"
+            
+            # Query all existing quote numbers for this month to find the next sequence
+            # This is safer than max() because of mixed legacy ID formats (e.g. hex suffixes)
+            existing_numbers = db.query(Quote.quote_number).filter(
+                Quote.quote_number.like(f"{prefix}%")
+            ).all()
+            
+            max_seq = 0
+            for (q_num,) in existing_numbers:
+                if not q_num: continue
+                try:
+                    # Extract suffix after last hyphen
+                    parts = q_num.split("-")
+                    if len(parts) >= 3:
+                        suffix = parts[-1]
+                        # Only consider numeric suffixes to avoid legacy hex IDs
+                        if suffix.isdigit():
+                            seq = int(suffix)
+                            if seq > max_seq:
+                                max_seq = seq
+                except (ValueError, IndexError):
+                    continue
+            
+            next_seq = max_seq + 1
+            obj_data["quote_number"] = f"{prefix}{next_seq:03d}"
         
         db_obj = Quote(**obj_data)
         db.add(db_obj)
@@ -50,6 +75,11 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         db.commit()
         db.refresh(db_obj)
         return db_obj
+
+    def get_multi(
+        self, db: Session, *, skip: int = 0, limit: int = 100
+    ) -> List[Quote]:
+        return db.query(self.model).order_by(self.model.created_at.desc()).offset(skip).limit(limit).all()
     
     def update_status(self, db: Session, *, quote: Quote, new_status: str) -> Quote:
         """Update quotation status with transition validation."""
@@ -176,13 +206,28 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
     
     def _create_audit_log(self, db: Session, quote_id: str, action: str, category: str, changes: dict = None):
         """Create an audit log entry."""
+        # Sanitize changes (Decimal/datetime) for JSON serialization
+        safe_changes = self._serialize_changes({"category": category, **(changes or {})})
+        
         audit = AuditLog(
             entity_type="quote",
             entity_id=quote_id,
             action=action,
-            changes={"category": category, **(changes or {})}
+            changes=safe_changes
         )
         db.add(audit)
+
+    def _serialize_changes(self, data: Any) -> Any:
+        """Helper to serialize data for JSON storage (Decimal, datetime)"""
+        if isinstance(data, dict):
+            return {k: self._serialize_changes(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._serialize_changes(v) for v in data]
+        elif isinstance(data, Decimal):
+            return str(data) # or float(data)
+        elif isinstance(data, (datetime, date)):
+            return data.isoformat()
+        return data
 
 quote = CRUDQuote(Quote)
 

@@ -1,11 +1,16 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict
+from typing import List, Optional, Literal
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import TYPE_CHECKING
 
+from app.schemas.customer import Customer
+
+# Reuse TaxSettingType from RFQ for consistency
+TaxSettingType = Literal["taxable_5", "taxable_10", "non_taxable", "tax_exempt"]
+
 if TYPE_CHECKING:
-    from app.schemas.customer import Customer
+    pass
 
 class QuoteItemBase(BaseModel):
     name: str
@@ -27,11 +32,19 @@ class QuoteItemCreate(QuoteItemBase):
     rfq_item_id: Optional[str] = None
     catalog_item_id: Optional[str] = None
 
+    @field_validator("quantity")
+    @classmethod
+    def quantity_must_be_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("Quantity must be greater than 0")
+        return v
+
 class QuoteItem(QuoteItemBase):
     id: str
     quote_id: str
     rfq_item_id: Optional[str] = None
     catalog_item_id: Optional[str] = None
+    source_rfq_info: Optional[dict] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -40,6 +53,9 @@ class QuoteBase(BaseModel):
     rfq_id: Optional[str] = None  # Optional for standalone quote creation
     customer_id: str
     status: str = "draft"
+    
+    # Tax setting (order-level, default 5%)
+    tax_setting: TaxSettingType = "taxable_5"
     
     subtotal: Decimal
     tax_total: Decimal
@@ -53,6 +69,7 @@ class QuoteCreate(QuoteBase):
 
 class QuoteUpdate(BaseModel):
     title: Optional[str] = None
+    tax_setting: Optional[TaxSettingType] = None
     valid_until: Optional[datetime] = None
     notes: Optional[str] = None
     subtotal: Optional[Decimal] = None

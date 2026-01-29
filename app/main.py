@@ -18,6 +18,8 @@ app.add_middleware(
         "http://localhost:5175",
         "http://localhost:5176",
         "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000",
         "https://dev-b2b-quotation-system.vercel.app",
         "https://b2b-quotation-system.vercel.app",
     ],

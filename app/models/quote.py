@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from typing import Optional, Dict
 
 class Quote(Base):
     __tablename__ = "quotes"
@@ -23,6 +24,9 @@ class Quote(Base):
     status: Mapped[str] = mapped_column(String, default="draft")  # draft, confirmed, closed, discarded
     accounting_status: Mapped[str | None] = mapped_column(String, nullable=True)  # unpaid, paid (null for draft)
     version: Mapped[int] = mapped_column(Integer, default=1)  # Version number for tracking changes
+    
+    # Tax setting (order-level)
+    tax_setting: Mapped[str] = mapped_column(String(20), default="taxable_5")  # taxable_5, taxable_10, non_taxable, tax_exempt
     
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
@@ -70,4 +74,15 @@ class QuoteItem(Base):
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     # Relationships
+    # Relationships
     quote: Mapped["Quote"] = relationship(back_populates="items")
+    rfq_item: Mapped["RFQItem"] = relationship("RFQItem", primaryjoin="foreign(QuoteItem.rfq_item_id) == remote(RFQItem.id)", viewonly=True)
+
+    @property
+    def source_rfq_info(self) -> Optional[Dict[str, str]]:
+        if self.rfq_item and self.rfq_item.version and self.rfq_item.version.rfq:
+            return {
+                "rfq_no": self.rfq_item.version.rfq.rfq_no,
+                "project_name": self.rfq_item.version.rfq.project_name
+            }
+        return None
