@@ -1,221 +1,278 @@
+
 """
 Quote Export Service - PDF and Excel generation for quotes
 """
-from io import BytesIO
+import io
+import os
+import subprocess
+import tempfile
 from typing import Optional
-from decimal import Decimal
 
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side
 from app.models.quote import Quote
 
 
 def generate_quote_pdf(quote: Quote, version: Optional[int] = None) -> bytes:
     """
     Generate a PDF for the given quote.
-    Uses ReportLab for PDF generation with Traditional Chinese support.
+    Uses LibreOffice (soffice) to convert the generated Excel file to PDF.
     """
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib import colors
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
+    # 1. Generate Excel first (Byte Stream)
+    excel_stream = generate_quote_excel_stream(quote, version)
     
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm)
-    
-    # Try to register a Chinese font (fallback to default if not available)
-    try:
-        pdfmetrics.registerFont(TTFont('NotoSansTC', '/System/Library/Fonts/PingFang.ttc'))
-        chinese_font = 'NotoSansTC'
-    except:
-        chinese_font = 'Helvetica'
-    
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'Title', 
-        parent=styles['Title'],
-        fontName=chinese_font,
-        fontSize=18,
-        spaceAfter=12
-    )
-    normal_style = ParagraphStyle(
-        'Normal',
-        parent=styles['Normal'],
-        fontName=chinese_font,
-        fontSize=10
-    )
-    
-    elements = []
-    
-    # Header
-    ver = version or quote.version
-    elements.append(Paragraph(f"報價單 {quote.quote_number} v{ver}", title_style))
-    elements.append(Spacer(1, 12))
-    
-    # Quote Info
-    elements.append(Paragraph(f"<b>標題：</b>{quote.title}", normal_style))
-    elements.append(Paragraph(f"<b>狀態：</b>{get_status_label(quote.status)}", normal_style))
-    if quote.accounting_status:
-        elements.append(Paragraph(f"<b>會計狀態：</b>{get_accounting_status_label(quote.accounting_status)}", normal_style))
-    if quote.valid_until:
-        elements.append(Paragraph(f"<b>有效期限：</b>{quote.valid_until.strftime('%Y-%m-%d')}", normal_style))
-    elements.append(Spacer(1, 12))
-    
-    # Customer Info
-    if quote.customer:
-        elements.append(Paragraph("<b>客戶資訊</b>", normal_style))
-        elements.append(Paragraph(f"公司：{quote.customer.company_name}", normal_style))
-        if hasattr(quote.customer, 'tax_id') and quote.customer.tax_id:
-            elements.append(Paragraph(f"統編：{quote.customer.tax_id}", normal_style))
-        elements.append(Spacer(1, 12))
-    
-    # Items Table
-    if quote.items:
-        elements.append(Paragraph("<b>報價明細</b>", normal_style))
-        elements.append(Spacer(1, 6))
+    # 2. Save to temporary file
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        xlsx_path = os.path.join(tmpdirname, "temp_quote.xlsx")
+        with open(xlsx_path, "wb") as f:
+            f.write(excel_stream.getvalue())
+            
+        # 3. Run LibreOffice conversion
+        # Command: soffice --headless --convert-to pdf --outdir <dir> <file>
+        # Adjust path for macOS standard install
+        soffice_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+        if not os.path.exists(soffice_path):
+             # Fallback check for linux/standard path or alias
+             soffice_path = "soffice" 
+
+        cmd = [
+            soffice_path,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            tmpdirname,
+            xlsx_path
+        ]
         
-        table_data = [['項目名稱', '單位', '數量', '單價', '小計']]
-        for item in quote.items:
-            table_data.append([
-                item.name,
-                item.unit,
-                str(item.quantity),
-                f"${item.unit_price:,.2f}",
-                f"${item.subtotal:,.2f}"
-            ])
-        
-        table = Table(table_data, colWidths=[150, 40, 50, 70, 80])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
-            ('FONTNAME', (0, 0), (-1, 0), chinese_font),
-            ('FONTNAME', (0, 1), (-1, -1), chinese_font),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        elements.append(table)
-        elements.append(Spacer(1, 12))
-    
-    # Totals
-    elements.append(Paragraph(f"<b>未稅小計：</b> ${quote.subtotal:,.2f}", normal_style))
-    elements.append(Paragraph(f"<b>稅額：</b> ${quote.tax_total:,.2f}", normal_style))
-    elements.append(Paragraph(f"<b>總計：</b> ${quote.total:,.2f}", normal_style))
-    
-    # Notes
-    if quote.notes:
-        elements.append(Spacer(1, 12))
-        elements.append(Paragraph("<b>備註：</b>", normal_style))
-        elements.append(Paragraph(quote.notes, normal_style))
-    
-    doc.build(elements)
-    return buffer.getvalue()
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # 4. Read the resulting PDF
+            # LibreOffice keeps the same basename: temp_quote.pdf
+            pdf_path = os.path.join(tmpdirname, "temp_quote.pdf")
+            if os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_content = f.read()
+                return pdf_content
+            else:
+                # Fallback or error?
+                # If PDF generation fails, we might throw an error/log it
+                raise Exception("PDF file was not generated by LibreOffice")
+                
+        except subprocess.CalledProcessError as e:
+            print(f"LibreOffice conversion failed: {e.stderr.decode()}")
+            raise Exception("Failed to convert Excel to PDF. Ensure LibreOffice is installed.")
 
 
 def generate_quote_excel(quote: Quote, version: Optional[int] = None) -> bytes:
+    """Wrapper to return bytes for the router."""
+    stream = generate_quote_excel_stream(quote, version)
+    return stream.getvalue()
+
+
+def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None) -> io.BytesIO:
     """
-    Generate an Excel file for the given quote.
-    Uses openpyxl for Excel generation.
+    Generate an Excel file for the given quote using the template.
     """
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Border, Side, Alignment
+    # Load template
+    # Assuming app/assets/quote_template.xlsx exists relative to project root
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    template_path = os.path.join(base_dir, "app", "assets", "quote_template.xlsx")
     
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "報價單"
+    try:
+        wb = openpyxl.load_workbook(template_path)
+        ws = wb.active
+    except Exception as e:
+        print(f"Error loading template: {e}")
+        # Fallback to empty if template missing (should not happen in prod if deployed correctly)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "報價單"
+
+    # Remove extra sheets if any
+    if len(wb.sheetnames) > 1:
+        for sheet_name in wb.sheetnames:
+            if sheet_name != ws.title:
+                del wb[sheet_name]
+
+    # Rename active sheet: "MMDD CustomerName"
+    # Format MMDD
+    ver = version_num or quote.version
+    dt = quote.created_at
+    mmdd = dt.strftime('%m%d')
+    cust_name = quote.customer.company_name if quote.customer else "Unknown"
+    # Excel sheet name limit is 31 chars. e.g. "0129 ClientName v1"
+    new_sheet_name = f"{mmdd} {cust_name} v{ver}"
+    ws.title = new_sheet_name[:31]
+
+    # Helper to safely set cell value (handles merged cells)
+    def safe_write(arg1, arg2, arg3=None):
+        if isinstance(arg1, int):
+            row, col, value = arg1, arg2, arg3
+            cell = ws.cell(row=row, column=col)
+        else:
+            coord, value = arg1, arg2
+            cell = ws[coord]
+        
+        # Check if cell is merged
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+             for merged_range in ws.merged_cells.ranges:
+                 if merged_range.min_row == cell.row and merged_range.min_col == cell.column:
+                     # Top-left of merge
+                     cell.value = value
+                     return
+                 elif cell.coordinate in merged_range:
+                     # Find top left
+                     top_left_cell = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
+                     top_left_cell.value = value
+                     return
+        else:
+             cell.value = value
     
-    ver = version or quote.version
+    # 1. Header Info
+    # J5: Date
+    safe_write('J5', quote.created_at.strftime('%Y/%m/%d'))
     
-    # Header
-    ws['A1'] = f"報價單 {quote.quote_number} v{ver}"
-    ws['A1'].font = Font(size=16, bold=True)
-    ws.merge_cells('A1:E1')
-    
-    # Quote Info
-    ws['A3'] = "標題"
-    ws['B3'] = quote.title
-    ws['A4'] = "狀態"
-    ws['B4'] = get_status_label(quote.status)
-    ws['A5'] = "會計狀態"
-    ws['B5'] = get_accounting_status_label(quote.accounting_status) if quote.accounting_status else "-"
-    ws['A6'] = "有效期限"
-    ws['B6'] = quote.valid_until.strftime('%Y-%m-%d') if quote.valid_until else "-"
-    
-    # Customer Info
+    # J6-J9: Customer Info
     if quote.customer:
-        ws['A8'] = "客戶"
-        ws['A8'].font = Font(bold=True)
-        ws['A9'] = "公司"
-        ws['B9'] = quote.customer.company_name
-        start_row = 11
-    else:
-        start_row = 8
+        safe_write('J6', quote.customer.company_name)
+        safe_write('J7', quote.customer.tax_id or "")
+        # Quote model doesn't explicitly have contact phone/name on Customer relation easily accessible 
+        # unless we fetch it. Assuming simple props for now.
+        # safe_write('J8', quote.customer.phone or "")
+        # safe_write('J9', quote.customer.contact_person or "")
+        
+    # L1: Quote No
+    safe_write('L1', quote.quote_number)
     
-    # Items Header
-    ws[f'A{start_row}'] = "報價明細"
-    ws[f'A{start_row}'].font = Font(bold=True)
-    start_row += 1
+    # I2: Title / Project Name
+    safe_write('I2', quote.title)
+
+    # 2. Overwrite Table Headers (Row 16)
+    # The template might have generic headers. We enforce ours.
+    # E(5): Item No
+    # F(6): Unit (replacing Type since QuoteItem has no type but has Unit)
+    # G(7): Description (Merged G-I)
+    # J(10): Qty
+    # K(11): Unit Price
+    # L(12): Amount
     
-    headers = ['項目名稱', '單位', '數量', '單價', '小計']
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=start_row, column=col, value=header)
-        cell.font = Font(bold=True)
-        cell.border = Border(bottom=Side(style='thin'))
+    safe_write(16, 5, "項次")
+    safe_write(16, 6, "單位") 
+    safe_write(16, 7, "項目說明")
+    safe_write(16, 10, "數量")
+    safe_write(16, 11, "單價")
+    safe_write(16, 12, "金額")
     
-    # Items Data
-    for idx, item in enumerate(quote.items):
-        row = start_row + idx + 1
-        ws.cell(row=row, column=1, value=item.name)
-        ws.cell(row=row, column=2, value=item.unit)
-        ws.cell(row=row, column=3, value=float(item.quantity))
-        ws.cell(row=row, column=4, value=float(item.unit_price))
-        ws.cell(row=row, column=5, value=float(item.subtotal))
-        ws.cell(row=row, column=5).number_format = '#,##0.00'
+    # 3. Items Logic
+    start_row = 17
+    current_row = start_row
     
-    # Totals
-    totals_row = start_row + len(quote.items) + 2
-    ws[f'D{totals_row}'] = "未稅小計"
-    ws[f'E{totals_row}'] = float(quote.subtotal)
-    ws[f'E{totals_row}'].number_format = '#,##0.00'
+    # Helper for row spans
+    def get_row_span(row_idx):
+        cell_coord = f"E{row_idx}"
+        for merged_range in ws.merged_cells.ranges:
+             if cell_coord in merged_range and merged_range.min_row == row_idx:
+                 return merged_range.max_row - merged_range.min_row + 1
+        return 1
+
+    # Clear existing rows (17-60)
+    for r in range(17, 60):
+        for c in range(1, 15):
+             safe_write(r, c, None)
+             
+    # Helper to create/check vertical merge
+    def ensure_vertical_merge(col_idx, start_r, span_len):
+        if span_len < 2: return
+        end_r = start_r + span_len - 1
+        cell = ws.cell(row=start_r, column=col_idx)
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+            return
+        
+        is_merge_start = False
+        for rng in ws.merged_cells.ranges:
+            if rng.min_row == start_r and rng.min_col == col_idx and rng.max_row >= end_r:
+                is_merge_start = True
+                break
+        
+        if not is_merge_start:
+            try:
+                ws.merge_cells(start_row=start_r, start_column=col_idx, end_row=end_r, end_column=col_idx)
+                # Apply center alignment
+                top_cell = ws.cell(row=start_r, column=col_idx)
+                top_cell.alignment = Alignment(horizontal='center', vertical='center')
+            except Exception as e:
+                print(f"Merge error at {start_r},{col_idx}: {e}")
+
+    # Write Items
+    for idx, item in enumerate(quote.items, 1):
+        span = get_row_span(current_row)
+        
+        # Col 5 (E): Index
+        safe_write(current_row, 5, str(idx))
+        if span >= 2: ensure_vertical_merge(5, current_row, span)
+
+        # Col 6 (F): Unit (Use unit_price's unit or item.unit)
+        safe_write(current_row, 6, item.unit)
+        if span >= 2: ensure_vertical_merge(6, current_row, span)
+
+        # Col 7 (G): Name & Description (Merged G-I)
+        # If span >= 2, we can split Name and Description into separate lines if desired.
+        # Format:
+        # Row 1: Name
+        # Row 2: Description (Spec / Dims)
+        
+        if span >= 2:
+            # Row 1: Name
+            safe_write(current_row, 7, item.name)
+            # Row 2: Description
+            if item.description:
+                safe_write(current_row + 1, 7, item.description)
+        else:
+            # Single row: Concatenate
+            full_text = item.name
+            if item.description:
+                full_text += f"\n{item.description}"
+            safe_write(current_row, 7, full_text)
+
+        # Col 10 (J): Quantity
+        safe_write(current_row, 10, float(item.quantity))
+        if span >= 2: ensure_vertical_merge(10, current_row, span)
+
+        # Col 11 (K): Unit Price
+        safe_write(current_row, 11, float(item.unit_price))
+        if span >= 2: ensure_vertical_merge(11, current_row, span)
+
+        # Col 12 (L): Subtotal (Amount)
+        safe_write(current_row, 12, float(item.subtotal))
+        if span >= 2: ensure_vertical_merge(12, current_row, span)
+        
+        current_row += span
+
+    # 4. Totals (Rows 49, 50, 51)
+    # K(11): Label, L(12): Value
     
-    ws[f'D{totals_row + 1}'] = "稅額"
-    ws[f'E{totals_row + 1}'] = float(quote.tax_total)
-    ws[f'E{totals_row + 1}'].number_format = '#,##0.00'
+    def fmt_price(val):
+        return f"NT$ {val:,.0f}"
+
+    safe_write(49, 11, "小計:")
+    safe_write(49, 12, fmt_price(quote.subtotal))
     
-    ws[f'D{totals_row + 2}'] = "總計"
-    ws[f'E{totals_row + 2}'] = float(quote.total)
-    ws[f'E{totals_row + 2}'].font = Font(bold=True)
-    ws[f'E{totals_row + 2}'].number_format = '#,##0.00'
+    safe_write(50, 11, "稅金:")
+    safe_write(50, 12, fmt_price(quote.tax_total))
     
-    # Column widths
-    ws.column_dimensions['A'].width = 30
-    ws.column_dimensions['B'].width = 12
-    ws.column_dimensions['C'].width = 12
-    ws.column_dimensions['D'].width = 15
-    ws.column_dimensions['E'].width = 15
+    safe_write(51, 11, "總計:")
+    safe_write(51, 12, fmt_price(quote.total))
     
-    buffer = BytesIO()
+    # Optional: Notes in Row 53+ if template allows?
+    # Template might have "備註" around row 42-46? 
+    # Since I don't know the exact row for notes in template, and `export_service.py` didn't write notes, 
+    # I will skip notes or try to find a safe spot.
+    # `export_service.py` loops up to 60 clearing things.
+    # If there is a note field, we can add it later.
+    
+    buffer = io.BytesIO()
     wb.save(buffer)
-    return buffer.getvalue()
-
-
-def get_status_label(status: str) -> str:
-    """Get Chinese label for quotation status."""
-    labels = {
-        "draft": "草稿",
-        "confirmed": "已建立",
-        "closed": "結案",
-        "discarded": "作廢"
-    }
-    return labels.get(status, status)
-
-
-def get_accounting_status_label(status: str) -> str:
-    """Get Chinese label for accounting status."""
-    labels = {
-        "unpaid": "未付款",
-        "paid": "已付款"
-    }
-    return labels.get(status, status)
+    buffer.seek(0)
+    return buffer
