@@ -44,6 +44,7 @@ class QuoteItem(QuoteItemBase):
     quote_id: str
     rfq_item_id: Optional[str] = None
     catalog_item_id: Optional[str] = None
+    source_rfq_info: Optional[dict] = None
     
     model_config = ConfigDict(from_attributes=True)
 
