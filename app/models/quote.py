@@ -24,6 +24,9 @@ class Quote(Base):
     accounting_status: Mapped[str | None] = mapped_column(String, nullable=True)  # unpaid, paid (null for draft)
     version: Mapped[int] = mapped_column(Integer, default=1)  # Version number for tracking changes
     
+    # Tax setting (order-level)
+    tax_setting: Mapped[str] = mapped_column(String(20), default="taxable_5")  # taxable_5, taxable_10, non_taxable, tax_exempt
+    
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
