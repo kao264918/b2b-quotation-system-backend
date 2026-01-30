@@ -2,10 +2,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.models.user import User
 from app.schemas.auth import LoginRequest
-from passlib.context import CryptContext
+from app.core.security import verify_password as bcrypt_verify, get_password_hash as bcrypt_hash
 from uuid import UUID
-
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 class CRUDUser:
     def get_by_email(self, db: Session, email: str) -> User | None:
@@ -37,11 +35,11 @@ class CRUDUser:
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         try:
-             return pwd_context.verify(plain_password, hashed_password)
+            return bcrypt_verify(plain_password, hashed_password)
         except Exception:
-             return False
+            return False
 
     def get_password_hash(self, password: str) -> str:
-        return pwd_context.hash(password)
+        return bcrypt_hash(password)
 
 user = CRUDUser()
