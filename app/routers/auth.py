@@ -79,11 +79,13 @@ def login(login_data: LoginRequest, response: Response, db: Session = Depends(ge
     db.commit()
     
     # Set Cookie
-    # Production Safety:
-    # - Secure: True in production (HTTPS required)
+    # Production/Staging Safety for cross-origin:
+    # - Secure: True (HTTPS required for cross-origin cookies)
     # - HttpOnly: True (No JS access)
-    # - SameSite: Lax (Allows top-level navigation, blocks CSRF)
+    # - SameSite: None (Required for cross-origin requests)
     
+    # For cross-origin (Vercel frontend + Railway backend), we need:
+    # - SameSite=None + Secure=True
     is_production = settings.ENVIRONMENT == "production"
     
     response.set_cookie(
@@ -92,8 +94,8 @@ def login(login_data: LoginRequest, response: Response, db: Session = Depends(ge
         httponly=True,
         max_age=session_duration_days * 24 * 60 * 60,
         expires=expires_at,
-        samesite="lax",
-        secure=is_production, 
+        samesite="none",  # Required for cross-origin
+        secure=True,  # Required when samesite=none
         path="/"
     )
     
