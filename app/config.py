@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -22,6 +22,14 @@ class Settings(BaseSettings):
         "http://localhost:3000",           # Alternative dev
         "https://*.vercel.app",            # Vercel previews
     ]
+    
+    # Brevo Email (optional)
+    BREVO_API_KEY: Optional[str] = None
+    BREVO_SENDER_EMAIL: Optional[str] = None
+    BREVO_SENDER_NAME: Optional[str] = None
+    
+    # App settings
+    APP_BASE_URL: str = "http://localhost:5173"
 
     # Auth
     SECRET_KEY: str = "CHANGE_THIS_IN_PRODUCTION_SECRET_KEY"
@@ -42,3 +50,4 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+

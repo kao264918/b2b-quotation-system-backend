@@ -47,6 +47,9 @@ app.include_router(vendor_quotes.router, prefix=f"{settings.API_V1_STR}/internal
 # Settings Routers
 app.include_router(units.router, prefix=f"{settings.API_V1_STR}/settings/units", tags=["settings"])
 
+# Auth Router (prefix is defined in the router itself)
+app.include_router(auth.router)
+
 @app.get("/")
 def root():
     return {"message": "B2B Quotation System API", "status": "ok"}
