@@ -22,7 +22,7 @@ class EmailService:
         Sends an email using Brevo (Sendinblue) Transactional Email API v3.
         """
         if not self.api_key:
-            logger.info(f"[Mock Email] To: {to_email}, Subject: {subject}\nContent len: {len(html_content)}")
+            logger.info(f"[Mock Email] To: {to_email}, Subject: {subject}\n--- EMAIL CONTENT START ---\n{html_content}\n--- EMAIL CONTENT END ---")
             return True
 
         url = "https://api.brevo.com/v3/smtp/email"
