@@ -7,6 +7,21 @@ class LoginRequest(BaseModel):
     password: str
     remember_me: bool = False
 
+class InviteRequest(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+
+class SetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
 class UserResponse(BaseModel):
     id: UUID
     email: EmailStr

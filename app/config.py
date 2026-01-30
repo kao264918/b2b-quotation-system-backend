@@ -29,10 +29,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # Access token duration (short lived)
     SESSION_EXPIRE_DAYS: int = 7           # Refresh session duration (long lived)
     
+    # Brevo Email
+    BREVO_API_KEY: str = ""
+    BREVO_SENDER_EMAIL: str = "noreply@example.com"
+    BREVO_SENDER_NAME: str = "B2B Quotation System"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=True,
+        extra="ignore"
     )
 
 settings = Settings()
