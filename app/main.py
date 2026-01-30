@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units, auth
+from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units
 from app.routers.internal import vendor_quotes
 
 app = FastAPI(
@@ -31,6 +31,7 @@ app.add_middleware(
 )
 
 # Public Routers
+app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(customers.router, prefix=f"{settings.API_V1_STR}/customers", tags=["customers"])
 app.include_router(vendors.router, prefix=f"{settings.API_V1_STR}/vendors", tags=["vendors"])
 app.include_router(catalog.router, prefix=f"{settings.API_V1_STR}/catalog-items", tags=["catalog"])
