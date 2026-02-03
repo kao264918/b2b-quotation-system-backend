@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     is_active: bool
     is_superuser: bool
+    access_token: Optional[str] = None
 
     class Config:
         from_attributes = True

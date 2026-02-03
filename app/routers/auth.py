@@ -20,6 +20,13 @@ def get_session_token_hash(token: str) -> str:
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     session_token = request.cookies.get("session_id")
+    
+    # Fallback to Bearer token if cookie is missing (Safari ITP fix)
+    if not session_token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            session_token = auth_header.split(" ")[1]
+
     if not session_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -99,7 +106,15 @@ def login(login_data: LoginRequest, response: Response, db: Session = Depends(ge
         path="/"
     )
     
-    return user
+    # Return UserResponse with token explicitly for clients that can't read cookies (Safari)
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        access_token=session_token
+    )
 
 @router.get("/me", response_model=UserResponse)
 def read_users_me(current_user: User = Depends(get_current_user)):
