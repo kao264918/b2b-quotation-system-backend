@@ -14,7 +14,7 @@ def verify_auth_flow():
     # 1. Login
     login_payload = {
         "email": "admin@example.com",
-        "password": "password123",
+        "password": "Password123",
         "remember_me": True
     }
     
