@@ -102,8 +102,13 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
     dt = quote.created_at
     mmdd = dt.strftime('%m%d')
     cust_name = quote.customer.company_name if quote.customer else "Unknown"
+    
+    # Sanitize sheet name (remove invalid chars: \ * ? : [ ] /)
+    import re
+    safe_cust_name = re.sub(r'[\\*?:/\[\]]', '_', cust_name)
+    
     # Excel sheet name limit is 31 chars. e.g. "0129 ClientName v1"
-    new_sheet_name = f"{mmdd} {cust_name} v{ver}"
+    new_sheet_name = f"{mmdd} {safe_cust_name} v{ver}"
     ws.title = new_sheet_name[:31]
 
     # Helper to safely set cell value (handles merged cells)
