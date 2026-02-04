@@ -1,6 +1,15 @@
 from .customer import Customer, CustomerCreate, CustomerUpdate, CustomerListResponse
 from .vendor import Vendor, VendorCreate, VendorUpdate, VendorContactBase
-from .catalog import CatalogItem, CatalogItemCreate, CatalogItemUpdate, CatalogItemListResponse, CatalogItemMeta, CatalogItemInternal
+from .catalog import (
+    CatalogItem,
+    CatalogItemPublic,
+    CatalogItemInternal,
+    CatalogItemCreate,
+    CatalogItemUpdate,
+    CatalogItemListResponse,
+    CatalogItemInternalListResponse,
+    CatalogItemMeta,
+)
 from .tax_category import TaxCategory, TaxCategoryCreate, TaxCategoryUpdate
 from .unit import Unit, UnitCreate, UnitUpdate
 from .template import QuoteTemplate, InvoiceTemplate

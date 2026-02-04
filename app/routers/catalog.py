@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app import crud, schemas
 from app.database import get_db
+from app.deps.auth import require_superuser
+from app.models.user import User
 
 router = APIRouter()
 
@@ -49,11 +51,68 @@ def read_catalog_items(
     )
 
 
-@router.post("", response_model=schemas.CatalogItem, status_code=201)
+@router.get("/internal", response_model=schemas.CatalogItemInternalListResponse)
+def read_catalog_items_internal(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    pageSize: int = Query(50, ge=1, le=150, description="Items per page (max 150)"),
+    status: Optional[str] = Query(None, description="Filter by status: active | inactive"),
+    type: Optional[str] = Query(None, description="Filter by type: product | service | output"),
+    search: Optional[str] = Query(None, description="Search by name (fuzzy)"),
+    current_user: User = Depends(require_superuser),
+) -> Any:
+    """
+    Internal/admin catalog list.
+    Includes internal cost fields.
+    """
+    if pageSize not in [50, 100, 150]:
+        pageSize = min(max(pageSize, 1), 150)
+
+    items, total_count = crud.catalog.get_multi_with_pagination(
+        db,
+        page=page,
+        page_size=pageSize,
+        status=status,
+        item_type=type,
+        search=search,
+    )
+
+    total_pages = math.ceil(total_count / pageSize) if total_count > 0 else 0
+
+    return schemas.CatalogItemInternalListResponse(
+        items=items,
+        meta=schemas.CatalogItemMeta(
+            totalCount=total_count,
+            page=page,
+            pageSize=pageSize,
+            totalPages=total_pages,
+        ),
+    )
+
+
+@router.get("/internal/{id}", response_model=schemas.CatalogItemInternal)
+def read_catalog_item_internal(
+    *,
+    db: Session = Depends(get_db),
+    id: str,
+    current_user: User = Depends(require_superuser),
+) -> Any:
+    """
+    Internal/admin catalog item detail.
+    Includes internal cost fields.
+    """
+    item = crud.catalog.get(db, id=id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Catalog Item not found")
+    return item
+
+
+@router.post("", response_model=schemas.CatalogItemInternal, status_code=201)
 def create_catalog_item(
     *,
     db: Session = Depends(get_db),
-    item_in: schemas.CatalogItemCreate
+    item_in: schemas.CatalogItemCreate,
+    current_user: User = Depends(require_superuser),
 ) -> Any:
     """
     Create a new catalog item.
@@ -78,7 +137,7 @@ def create_catalog_item(
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@router.get("/{id}", response_model=schemas.CatalogItem)
+@router.get("/{id}", response_model=schemas.CatalogItemPublic)
 def read_catalog_item(
     *,
     db: Session = Depends(get_db),
@@ -94,12 +153,13 @@ def read_catalog_item(
     return item
 
 
-@router.put("/{id}", response_model=schemas.CatalogItem)
+@router.put("/{id}", response_model=schemas.CatalogItemInternal)
 def update_catalog_item(
     *,
     db: Session = Depends(get_db),
     id: str,
-    item_in: schemas.CatalogItemUpdate
+    item_in: schemas.CatalogItemUpdate,
+    current_user: User = Depends(require_superuser),
 ) -> Any:
     """
     Update catalog item.
@@ -126,11 +186,12 @@ def update_catalog_item(
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@router.post("/{id}/inactivate", response_model=schemas.CatalogItem)
+@router.post("/{id}/inactivate", response_model=schemas.CatalogItemInternal)
 def inactivate_catalog_item(
     *,
     db: Session = Depends(get_db),
-    id: str
+    id: str,
+    current_user: User = Depends(require_superuser),
 ) -> Any:
     """
     Set catalog item status to inactive.
@@ -153,11 +214,12 @@ def inactivate_catalog_item(
     return item
 
 
-@router.post("/{id}/reactivate", response_model=schemas.CatalogItem)
+@router.post("/{id}/reactivate", response_model=schemas.CatalogItemInternal)
 def reactivate_catalog_item(
     *,
     db: Session = Depends(get_db),
-    id: str
+    id: str,
+    current_user: User = Depends(require_superuser),
 ) -> Any:
     """
     Reactivate an inactive catalog item.
@@ -181,11 +243,12 @@ def reactivate_catalog_item(
     
     return item
 
-@router.delete("/{id}", response_model=schemas.CatalogItem)
+@router.delete("/{id}", response_model=schemas.CatalogItemInternal)
 def delete_catalog_item(
     *,
     db: Session = Depends(get_db),
-    id: str
+    id: str,
+    current_user: User = Depends(require_superuser),
 ) -> Any:
     """
     Soft delete catalog item.
@@ -207,4 +270,3 @@ def delete_catalog_item(
     )
     
     return deleted_item
-

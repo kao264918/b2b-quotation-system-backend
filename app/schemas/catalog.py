@@ -49,19 +49,18 @@ class CatalogItemUpdate(BaseModel):
 
 # ===== Response Schemas =====
 
-class CatalogItem(CatalogItemBase):
-    """Public response schema - includes item_no and reference_cost"""
+class CatalogItemPublic(CatalogItemBase):
+    """Public response schema - excludes reference_cost"""
     id: str
     item_no: str
     type: Literal["product", "service", "output"]
-    reference_cost: Decimal
     created_at: datetime
     updated_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
 
 
-class CatalogItemInternal(CatalogItem):
+class CatalogItemInternal(CatalogItemPublic):
     """Internal schema - includes reference_cost and deleted_at"""
     reference_cost: Decimal
     deleted_at: Optional[datetime] = None
@@ -79,6 +78,14 @@ class CatalogItemMeta(BaseModel):
 
 class CatalogItemListResponse(BaseModel):
     """Paginated list response"""
-    items: List[CatalogItem]
+    items: List[CatalogItemPublic]
     meta: CatalogItemMeta
 
+
+class CatalogItemInternalListResponse(BaseModel):
+    """Paginated list response (internal/admin)"""
+    items: List[CatalogItemInternal]
+    meta: CatalogItemMeta
+
+# Backward-compatible alias
+CatalogItem = CatalogItemPublic
