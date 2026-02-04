@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.auth import LoginRequest, UserResponse, InviteRequest, SetPasswordRequest, ForgotPasswordRequest, ResetPasswordRequest
@@ -7,55 +7,53 @@ from app.models.session import RefreshSession
 from app.models.user import User
 from app.models.token import VerificationToken, PasswordResetToken
 from app.config import settings
+from app.core.rate_limit import rate_limiter
 from app.services.email import email_service
 from datetime import datetime, timedelta, timezone
 from fastapi.responses import RedirectResponse
 import secrets
-import hashlib
+from app.deps.auth import get_current_user, get_session_token_hash
 
 router = APIRouter()
 
-def get_session_token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
+def set_csrf_cookie(response: Response, token: str) -> None:
+    is_production = settings.ENVIRONMENT == "production"
+    cookie_secure = is_production
+    cookie_samesite = "lax"
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    session_token = request.cookies.get("session_id")
-    
-    # Fallback to Bearer token if cookie is missing (Safari ITP fix)
-    if not session_token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            session_token = auth_header.split(" ")[1]
+    response.set_cookie(
+        key="csrf_token",
+        value=token,
+        httponly=False,
+        samesite=cookie_samesite,
+        secure=cookie_secure,
+        path="/",
+    )
 
-    if not session_token:
+def get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+def require_rate_limit(key: str, limit: int, window_seconds: int) -> None:
+    if not rate_limiter.check_and_increment(key, limit=limit, window_seconds=window_seconds):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated"
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
         )
-    
-    token_hash = get_session_token_hash(session_token)
-    
-    # Clean up expired sessions occasionally? Or just check expiry here.
-    session = db.query(RefreshSession).filter(RefreshSession.token_hash == token_hash).first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid session"
-        )
-        
-    if session.expires_at < datetime.now(timezone.utc):
-        db.delete(session)
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired"
-        )
-        
-    return session.user
 
 @router.post("/login", response_model=UserResponse)
-def login(login_data: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(
+    login_data: LoginRequest,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    client_ip = get_client_ip(request)
+    require_rate_limit(f"login:ip:{client_ip}", limit=20, window_seconds=60)
+    require_rate_limit(f"login:email:{login_data.email}", limit=10, window_seconds=60)
+
     user = crud_user.user.authenticate(db, email=login_data.email, password=login_data.password)
     if not user:
         raise HTTPException(
@@ -91,21 +89,27 @@ def login(login_data: LoginRequest, response: Response, db: Session = Depends(ge
     # - HttpOnly: True (No JS access)
     # - SameSite: None (Required for cross-origin requests)
     
-    # For cross-origin (Vercel frontend + Railway backend), we need:
-    # - SameSite=None + Secure=True
+    # Same-site cookie defaults for same-domain deployments (Vercel rewrite / reverse proxy).
+    # In production we require HTTPS cookies; in development allow http.
     is_production = settings.ENVIRONMENT == "production"
-    
+    cookie_secure = is_production
+    cookie_samesite = "lax"
+
     response.set_cookie(
         key="session_id",
         value=session_token,
         httponly=True,
         max_age=session_duration_days * 24 * 60 * 60,
         expires=expires_at,
-        samesite="none",  # Required for cross-origin
-        secure=True,  # Required when samesite=none
-        path="/"
+        samesite=cookie_samesite,
+        secure=cookie_secure,
+        path="/",
     )
-    
+
+    # CSRF token cookie (double-submit)
+    csrf_token = secrets.token_urlsafe(32)
+    set_csrf_cookie(response, csrf_token)
+
     # Return UserResponse with token explicitly for clients that can't read cookies (Safari)
     return UserResponse(
         id=user.id,
@@ -129,12 +133,26 @@ def logout(response: Response, request: Request, db: Session = Depends(get_db)):
         db.commit()
     
     response.delete_cookie("session_id")
+    response.delete_cookie("csrf_token")
     return {"message": "Logged out successfully"}
 
+@router.get("/csrf")
+def csrf_token(response: Response):
+    token = secrets.token_urlsafe(32)
+    set_csrf_cookie(response, token)
+    return {"csrf_token": token}
+
 @router.post("/invite", response_model=UserResponse)
-def invite_user(invite_data: InviteRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def invite_user(
+    invite_data: InviteRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
+
+    require_rate_limit(f"invite:admin:{current_user.id}", limit=30, window_seconds=3600)
     
     # Check if user exists
     existing = crud_user.user.get_by_email(db, email=invite_data.email)
@@ -171,7 +189,7 @@ def invite_user(invite_data: InviteRequest, current_user: User = Depends(get_cur
     db.commit()
     
     # Send Email
-    email_service.send_verification_email(user_in.email, token_str)
+    background_tasks.add_task(email_service.send_verification_email, user_in.email, token_str)
     
     return user_in
 
@@ -249,7 +267,16 @@ def set_password(payload: SetPasswordRequest, db: Session = Depends(get_db)):
     return {"message": "Password set successfully"}
 
 @router.post("/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    client_ip = get_client_ip(request)
+    require_rate_limit(f"forgot:ip:{client_ip}", limit=10, window_seconds=60)
+    require_rate_limit(f"forgot:email:{payload.email}", limit=5, window_seconds=60)
+
     # Always return 200 to prevent user enumeration
     user = crud_user.user.get_by_email(db, email=payload.email)
     if user and user.is_active:
@@ -267,12 +294,15 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         db.commit()
         
         # Send Email
-        email_service.send_password_reset_email(user.email, token_str)
+        background_tasks.add_task(email_service.send_password_reset_email, user.email, token_str)
         
     return {"message": "If the email exists, a reset link has been sent."}
 
 @router.post("/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(payload: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    client_ip = get_client_ip(request)
+    require_rate_limit(f"reset:ip:{client_ip}", limit=10, window_seconds=60)
+
     token_hash = get_session_token_hash(payload.token)
     reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
     
@@ -305,7 +335,15 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     return {"message": "Password reset successfully"}
 
 @router.post("/request-access")
-def request_access(payload: InviteRequest, db: Session = Depends(get_db)):
+def request_access(
+    payload: InviteRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    client_ip = get_client_ip(request)
+    require_rate_limit(f"request_access:ip:{client_ip}", limit=10, window_seconds=60)
+
     # 1. Check if user already exists
     existing = crud_user.user.get_by_email(db, email=payload.email)
     if existing:
@@ -314,7 +352,6 @@ def request_access(payload: InviteRequest, db: Session = Depends(get_db)):
         pass
     
     # 2. Send Email to Admin
-    email_service.send_access_request_email(payload.email)
+    background_tasks.add_task(email_service.send_access_request_email, payload.email)
     
     return {"message": "Request received"}
-

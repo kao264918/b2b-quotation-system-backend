@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     BREVO_SENDER_EMAIL: Optional[str] = None
     BREVO_SENDER_NAME: Optional[str] = None
 
+    # Rate limiting (Redis)
+    REDIS_URL: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
