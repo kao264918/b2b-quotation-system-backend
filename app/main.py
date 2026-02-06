@@ -7,8 +7,17 @@ from app.config import settings
 from app.deps.auth import get_current_user, require_superuser
 from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units
 from app.routers.internal import vendor_quotes
+from app.core.request_id import RequestIdMiddleware
+from app.core.request_logging import RequestLoggingMiddleware
+from app.core.logging import setup_logging
 
 is_production = settings.ENVIRONMENT == "production"
+
+# Initialize structured logging
+setup_logging(
+    log_level="INFO",
+    json_format=is_production,  # JSON in production, standard format in dev
+)
 
 if is_production and settings.SECRET_KEY.startswith("CHANGE_THIS"):
     raise RuntimeError("SECRET_KEY must be set to a secure value in production.")
@@ -68,8 +77,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Request-Id"],
 )
+
+# Observability Middleware (order matters: RequestId runs first, then Logging)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RequestIdMiddleware)
 
 # Public Routers
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
