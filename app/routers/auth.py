@@ -16,10 +16,21 @@ from app.deps.auth import get_current_user, get_session_token_hash
 
 router = APIRouter()
 
-def set_csrf_cookie(response: Response, token: str) -> None:
-    is_production = settings.ENVIRONMENT == "production"
-    cookie_secure = is_production
-    cookie_samesite = "lax"
+
+def resolve_cookie_policy(request: Request) -> tuple[bool, str]:
+    """
+    Localhost keeps lax/non-secure for HTTP development.
+    Deployed domains use none/secure to support cross-site frontend/backend.
+    """
+    host = (request.url.hostname or "").lower()
+    is_localhost = host in {"localhost", "127.0.0.1"} or host.endswith(".local")
+    if is_localhost:
+        return False, "lax"
+    return True, "none"
+
+
+def set_csrf_cookie(response: Response, token: str, request: Request) -> None:
+    cookie_secure, cookie_samesite = resolve_cookie_policy(request)
 
     response.set_cookie(
         key="csrf_token",
@@ -89,11 +100,7 @@ def login(
     # - HttpOnly: True (No JS access)
     # - SameSite: None (Required for cross-origin requests)
     
-    # Same-site cookie defaults for same-domain deployments (Vercel rewrite / reverse proxy).
-    # In production we require HTTPS cookies; in development allow http.
-    is_production = settings.ENVIRONMENT == "production"
-    cookie_secure = is_production
-    cookie_samesite = "lax"
+    cookie_secure, cookie_samesite = resolve_cookie_policy(request)
 
     response.set_cookie(
         key="session_id",
@@ -108,7 +115,7 @@ def login(
 
     # CSRF token cookie (double-submit)
     csrf_token = secrets.token_urlsafe(32)
-    set_csrf_cookie(response, csrf_token)
+    set_csrf_cookie(response, csrf_token, request)
 
     # Return UserResponse with token explicitly for clients that can't read cookies (Safari)
     return UserResponse(
@@ -137,9 +144,9 @@ def logout(response: Response, request: Request, db: Session = Depends(get_db)):
     return {"message": "Logged out successfully"}
 
 @router.get("/csrf")
-def csrf_token(response: Response):
+def csrf_token(response: Response, request: Request):
     token = secrets.token_urlsafe(32)
-    set_csrf_cookie(response, token)
+    set_csrf_cookie(response, token, request)
     return {"csrf_token": token}
 
 @router.post("/invite", response_model=UserResponse)
