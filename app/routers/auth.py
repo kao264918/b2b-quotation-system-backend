@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.responses import RedirectResponse
 import secrets
 from app.deps.auth import get_current_user, get_session_token_hash
+from app.crud import audit_log as crud_audit_log
 
 router = APIRouter()
 
@@ -124,14 +125,25 @@ def login(
     csrf_token = secrets.token_urlsafe(32)
     set_csrf_cookie(response, csrf_token, request)
 
-    # Return UserResponse with token explicitly for clients that can't read cookies (Safari)
+    # Session token is delivered via httpOnly cookie only.
+    # Do NOT leak it in the response body (prevents JS/log interception).
+    
+    # Audit log for login
+    crud_audit_log.log_action(
+        db,
+        entity_type="user",
+        entity_id=str(user.id),
+        action="login",
+        actor=user.email,
+        changes={"ip": client_ip},
+    )
+    
     return UserResponse(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         is_active=user.is_active,
         is_superuser=user.is_superuser,
-        access_token=session_token
     )
 
 @router.get("/me", response_model=UserResponse)
@@ -207,6 +219,15 @@ def invite_user(
     # Send Email
     background_tasks.add_task(email_service.send_verification_email, user_in.email, token_str)
     
+    # Audit log for invite
+    crud_audit_log.log_action(
+        db,
+        entity_type="user",
+        entity_id=str(user_in.id),
+        action="invite",
+        actor=current_user.email,
+    )
+    
     return user_in
 
 @router.get("/verify-email")
@@ -214,13 +235,6 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     token_hash = get_session_token_hash(token)
     
     ver_token = db.query(VerificationToken).filter(VerificationToken.token_hash == token_hash).first()
-    
-    error_redirect = f"{settings.CORS_ORIGINS[0]}/login?error=invalid_token" # Fallback
-    # Ideally use APP_BASE_URL env if available, or just use first CORS origin as heuristic
-    base_url = settings.ENVIRONMENT == 'production' and "https://<vercel-domain>" or "http://localhost:5173"
-    # Actually, email_service uses APP_BASE_URL. We should use that logic or import it.
-    # But for redirects, simple is better.
-    # Let's assume CORS_ORIGINS[0] is frontend.
     
     if not ver_token:
         # Invalid token
@@ -244,8 +258,9 @@ def verify_email(token: str, db: Session = Depends(get_db)):
         # db.add(ver_token)
         db.commit()
     
-    # Return JSON success
-    return {"message": "Email verified successfully", "token": token}
+    # Return JSON success — never leak the token in the response body.
+    # The frontend already has the token from the URL query parameter.
+    return {"message": "Email verified successfully"}
 
 @router.post("/set-password")
 def set_password(payload: SetPasswordRequest, db: Session = Depends(get_db)):
@@ -348,6 +363,15 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
     db.add(user)
     db.commit()
     
+    # Audit log for password reset
+    crud_audit_log.log_action(
+        db,
+        entity_type="user",
+        entity_id=str(user.id),
+        action="password_reset",
+        actor=user.email,
+    )
+    
     return {"message": "Password reset successfully"}
 
 @router.post("/request-access")
@@ -371,3 +395,24 @@ def request_access(
     background_tasks.add_task(email_service.send_access_request_email, payload.email)
     
     return {"message": "Request received"}
+
+
+@router.post("/cleanup-sessions")
+def cleanup_expired_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove all expired sessions from the database.
+    Superuser only. Can be called by a cron job or admin manually.
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    deleted = (
+        db.query(RefreshSession)
+        .filter(RefreshSession.expires_at < datetime.now(timezone.utc))
+        .delete()
+    )
+    db.commit()
+    return {"message": f"Cleaned up {deleted} expired sessions"}

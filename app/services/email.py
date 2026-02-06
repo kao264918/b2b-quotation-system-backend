@@ -1,3 +1,4 @@
+import html
 import logging
 
 from app.config import settings
@@ -24,6 +25,8 @@ class EmailService:
 
     def send_access_request_email(self, user_email: str) -> bool:
         subject = "New Access Request - B2B Quotation System"
+        # Escape user-supplied email to prevent HTML injection
+        safe_email = html.escape(user_email, quote=True)
         content = f"""
         <!DOCTYPE html>
         <html>
@@ -37,7 +40,7 @@ class EmailService:
             <div class="container">
                 <h2>New Access Request</h2>
                 <p>A new user has requested access to the platform.</p>
-                <p><strong>Email:</strong> {user_email}</p>
+                <p><strong>Email:</strong> {safe_email}</p>
                 <hr>
                 <p style="font-size: 12px; color: #666;">
                     To approve this user, please use the admin invite functionality or run the invite script locally.

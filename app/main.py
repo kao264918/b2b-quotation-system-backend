@@ -1,9 +1,13 @@
+import logging
 import re
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
+
 from app.config import settings
+from app.database import SessionLocal
 from app.deps.auth import get_current_user, require_superuser
 from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units
 from app.routers.internal import vendor_quotes
@@ -11,7 +15,25 @@ from app.core.request_id import RequestIdMiddleware
 from app.core.request_logging import RequestLoggingMiddleware
 from app.core.logging import setup_logging
 
+logger = logging.getLogger(__name__)
+
 is_production = settings.ENVIRONMENT == "production"
+
+# ---------------------------------------------------------------------------
+# Sentry Error Tracking (optional, requires SENTRY_DSN env var)
+# ---------------------------------------------------------------------------
+if settings.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.ENVIRONMENT,
+            traces_sample_rate=0.1 if is_production else 1.0,
+            send_default_pii=False,
+        )
+        logger.info("Sentry initialized successfully")
+    except Exception as e:
+        logger.warning("Failed to initialize Sentry: %s", e)
 
 # Initialize structured logging
 setup_logging(
@@ -29,15 +51,38 @@ app = FastAPI(
     redoc_url=None if is_production else "/redoc",
 )
 
+
+# ---------------------------------------------------------------------------
+# Global unhandled exception handler
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# CSRF protection
+# ---------------------------------------------------------------------------
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 CSRF_EXEMPT_PATHS = {
     f"{settings.API_V1_STR}/auth/login",
+    f"{settings.API_V1_STR}/auth/logout",
     f"{settings.API_V1_STR}/auth/forgot-password",
     f"{settings.API_V1_STR}/auth/reset-password",
     f"{settings.API_V1_STR}/auth/set-password",
     f"{settings.API_V1_STR}/auth/request-access",
 }
-ALLOWED_ORIGIN_REGEX = re.compile(r"https://.*\.vercel\.app")
+
+# Build origin regex from config (scoped to YOUR Vercel project, not all *.vercel.app)
+ALLOWED_ORIGIN_REGEX = (
+    re.compile(settings.CORS_ORIGIN_REGEX)
+    if settings.CORS_ORIGIN_REGEX
+    else None
+)
 
 
 def is_allowed_origin(origin: str) -> bool:
@@ -45,7 +90,9 @@ def is_allowed_origin(origin: str) -> bool:
         return True
     if settings.APP_BASE_URL and origin == settings.APP_BASE_URL:
         return True
-    return bool(ALLOWED_ORIGIN_REGEX.match(origin))
+    if ALLOWED_ORIGIN_REGEX and ALLOWED_ORIGIN_REGEX.fullmatch(origin):
+        return True
+    return False
 
 
 @app.middleware("http")
@@ -69,11 +116,14 @@ async def csrf_protect(request: Request, call_next):
 
     return await call_next(request)
 
-# CORS Configuration
+
+# ---------------------------------------------------------------------------
+# CORS Configuration — only allow configured origins
+# ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel preview domains
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,  # None disables regex matching
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,6 +133,10 @@ app.add_middleware(
 # Observability Middleware (order matters: RequestId runs first, then Logging)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RequestIdMiddleware)
+
+# ---------------------------------------------------------------------------
+# Routers
+# ---------------------------------------------------------------------------
 
 # Public Routers
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
@@ -152,11 +206,30 @@ app.include_router(
 )
 
 
-
+# ---------------------------------------------------------------------------
+# Health / Root
+# ---------------------------------------------------------------------------
 @app.get("/")
 def root():
     return {"message": "B2B Quotation System API", "status": "ok"}
 
+
 @app.get("/health")
 def health_check():
+    """
+    Health check that verifies database connectivity.
+    Returns 503 if the database is unreachable.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Health check failed: database unreachable")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "detail": "database unreachable"},
+        )
     return {"status": "healthy"}
