@@ -19,15 +19,21 @@ router = APIRouter()
 
 def resolve_cookie_policy(request: Request) -> tuple[bool, str]:
     """
-    Development: Always use lax/non-secure for HTTP development (supports LAN access).
-    Production: Use none/secure to support cross-site frontend/backend.
-    """
-    # In development, always use lax mode to support Safari on LAN
-    if settings.ENVIRONMENT == "development":
-        return False, "lax"
+    Auto-detect production environment based on request protocol.
     
-    # Production uses strict cross-origin policy
-    return True, "none"
+    HTTPS requests → SameSite=None; Secure (for cross-origin Safari support)
+    HTTP requests → SameSite=lax (for local development)
+    
+    This approach doesn't rely on ENVIRONMENT variable and works automatically.
+    """
+    is_https = request.url.scheme == "https"
+    
+    if is_https:
+        # Production: HTTPS with cross-origin support for Safari
+        return True, "none"
+    else:
+        # Development: HTTP with same-site only
+        return False, "lax"
 
 
 def set_csrf_cookie(response: Response, token: str, request: Request) -> None:
