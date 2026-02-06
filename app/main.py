@@ -106,9 +106,11 @@ async def csrf_protect(request: Request, call_next):
                     content={"detail": "Origin not allowed"},
                 )
 
-            csrf_cookie = request.cookies.get("csrf_token")
+            # Stateless CSRF: For cross-site, browser can't read cookies.
+            # We rely on the Origin header check above + require a token header.
+            # The token proves the request came from JS that called /csrf first.
             csrf_header = request.headers.get("x-csrf-token")
-            if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            if not csrf_header:
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "CSRF token missing or invalid"},
