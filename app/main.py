@@ -32,6 +32,7 @@ app = FastAPI(
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 CSRF_EXEMPT_PATHS = {
     f"{settings.API_V1_STR}/auth/login",
+    f"{settings.API_V1_STR}/auth/logout",
     f"{settings.API_V1_STR}/auth/forgot-password",
     f"{settings.API_V1_STR}/auth/reset-password",
     f"{settings.API_V1_STR}/auth/set-password",
