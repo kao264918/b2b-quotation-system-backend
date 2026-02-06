@@ -19,13 +19,14 @@ router = APIRouter()
 
 def resolve_cookie_policy(request: Request) -> tuple[bool, str]:
     """
-    Localhost keeps lax/non-secure for HTTP development.
-    Deployed domains use none/secure to support cross-site frontend/backend.
+    Development: Always use lax/non-secure for HTTP development (supports LAN access).
+    Production: Use none/secure to support cross-site frontend/backend.
     """
-    host = (request.url.hostname or "").lower()
-    is_localhost = host in {"localhost", "127.0.0.1"} or host.endswith(".local")
-    if is_localhost:
+    # In development, always use lax mode to support Safari on LAN
+    if settings.ENVIRONMENT == "development":
         return False, "lax"
+    
+    # Production uses strict cross-origin policy
     return True, "none"
 
 
@@ -139,8 +140,10 @@ def logout(response: Response, request: Request, db: Session = Depends(get_db)):
         db.query(RefreshSession).filter(RefreshSession.token_hash == token_hash).delete()
         db.commit()
     
-    response.delete_cookie("session_id")
-    response.delete_cookie("csrf_token")
+    cookie_secure, cookie_samesite = resolve_cookie_policy(request)
+    
+    response.delete_cookie("session_id", path="/", samesite=cookie_samesite, secure=cookie_secure)
+    response.delete_cookie("csrf_token", path="/", samesite=cookie_samesite, secure=cookie_secure)
     return {"message": "Logged out successfully"}
 
 @router.get("/csrf")
