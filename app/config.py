@@ -24,8 +24,12 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:3000",
-        "https://*.vercel.app",
     ]
+
+    # Vercel preview domain regex — restrict to YOUR project prefix only.
+    # Example: r"https://b2b-quotation-.*\.vercel\.app"
+    # Set via env var CORS_ORIGIN_REGEX in production.
+    CORS_ORIGIN_REGEX: Optional[str] = None
 
     # Frontend base URL (used to construct email links)
     APP_BASE_URL: str = "http://localhost:5173"
@@ -38,6 +42,9 @@ class Settings(BaseSettings):
 
     # Rate limiting (Redis)
     REDIS_URL: Optional[str] = None
+
+    # Error tracking (Sentry)
+    SENTRY_DSN: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

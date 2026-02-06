@@ -46,10 +46,16 @@ class InMemoryRateLimiter:
 
 
 class RedisRateLimiter:
+    """
+    Redis-backed rate limiter with automatic fallback to in-memory on failure.
+    """
+
     def __init__(self, redis_url: str) -> None:
         if not redis:
             raise RuntimeError("redis package is not installed")
         self._client = redis.Redis.from_url(redis_url, decode_responses=True)
+        # Keep an in-memory fallback for when Redis is temporarily unavailable
+        self._fallback = InMemoryRateLimiter()
 
     def check_and_increment(self, key: str, limit: int, window_seconds: int) -> bool:
         try:
@@ -60,8 +66,12 @@ class RedisRateLimiter:
             count, _ = pipe.execute()
             return int(count) <= limit
         except Exception as exc:
-            logger.warning("Redis rate limit failed, allowing request. error=%s", str(exc))
-            return True
+            # Fall back to in-memory instead of blindly allowing the request
+            logger.warning(
+                "Redis rate limit failed, falling back to in-memory limiter. error=%s",
+                str(exc),
+            )
+            return self._fallback.check_and_increment(key, limit, window_seconds)
 
 
 def build_rate_limiter():
