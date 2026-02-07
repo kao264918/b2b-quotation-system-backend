@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     ]
 
     # Vercel preview domain regex — restrict to YOUR project prefix only.
-    # Matches both dev-b2b-quotation-system and b2b-quotation-system preview URLs.
+    # Matches preview hosts that include "b2b-quotation-system" in a single hostname label.
     # Override via env var CORS_ORIGIN_REGEX in production for stricter control.
-    CORS_ORIGIN_REGEX: Optional[str] = r"https://.*b2b-quotation-system.*\.vercel\.app"
+    CORS_ORIGIN_REGEX: Optional[str] = r"https://[a-z0-9-]*b2b-quotation-system[a-z0-9-]*\.vercel\.app"
 
     # Frontend base URL (used to construct email links)
     APP_BASE_URL: str = "http://localhost:5173"

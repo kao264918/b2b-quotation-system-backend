@@ -11,7 +11,7 @@ from app.database import SessionLocal
 from app.deps.auth import get_current_user, require_superuser
 from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units
 from app.routers.internal import vendor_quotes
-from app.core.request_id import RequestIdMiddleware
+from app.core.request_id import RequestIdMiddleware, get_request_id
 from app.core.request_logging import RequestLoggingMiddleware
 from app.core.logging import setup_logging
 
@@ -95,12 +95,46 @@ def is_allowed_origin(origin: str) -> bool:
     return False
 
 
+def log_security_event(event: str, request: Request, detail: str, origin: str | None = None) -> None:
+    logger.warning(
+        event,
+        extra={
+            "extra_fields": {
+                "event": event,
+                "detail": detail,
+                "method": request.method,
+                "path": request.url.path,
+                "origin": origin,
+                "request_id": get_request_id(),
+            }
+        },
+    )
+
+
 @app.middleware("http")
 async def csrf_protect(request: Request, call_next):
+    if request.method == "OPTIONS" and request.url.path.startswith(settings.API_V1_STR):
+        origin = request.headers.get("origin")
+        response = await call_next(request)
+        if response.status_code >= 400:
+            log_security_event(
+                "cors_preflight_rejected",
+                request,
+                f"preflight returned {response.status_code}",
+                origin=origin,
+            )
+        return response
+
     if request.method in UNSAFE_METHODS and request.url.path.startswith(settings.API_V1_STR):
         if request.url.path not in CSRF_EXEMPT_PATHS:
             origin = request.headers.get("origin")
             if origin and not is_allowed_origin(origin):
+                log_security_event(
+                    "origin_rejected",
+                    request,
+                    "Origin is not in allowlist",
+                    origin=origin,
+                )
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "Origin not allowed"},
@@ -111,6 +145,12 @@ async def csrf_protect(request: Request, call_next):
             # The token proves the request came from JS that called /csrf first.
             csrf_header = request.headers.get("x-csrf-token")
             if not csrf_header:
+                log_security_event(
+                    "csrf_rejected",
+                    request,
+                    "Missing X-CSRF-Token header",
+                    origin=origin,
+                )
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "CSRF token missing or invalid"},
