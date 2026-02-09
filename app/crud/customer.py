@@ -1,6 +1,7 @@
 from typing import List
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func  # Added imports here
+from sqlalchemy import or_, func, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from app.crud.base import CRUDBase
 from app.models.customer import Customer
 from app.schemas.customer import CustomerCreate, CustomerUpdate
@@ -15,8 +16,9 @@ class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
         """Get customers filtered by role and status, optionally search by name/tax_id"""
         query = db.query(self.model).filter(self.model.status == status)
         
-        # Role filter (SQLite specific currently)
-        query = query.filter(func.json_each(self.model.roles).value == role)
+        # Role filter - use contains for JSON array (Postgres @> operator)
+        # Note: Postgres 'json' type doesn't support @>, so we cast to JSONB
+        query = query.filter(cast(self.model.roles, JSONB).contains([role]))
         
         if search:
             search_pattern = f"%{search}%"
@@ -34,7 +36,7 @@ class CRUDCustomer(CRUDBase[Customer, CustomerCreate, CustomerUpdate]):
     def count_by_role(self, db: Session, *, role: str, status: str = "active", search: str = None) -> int:
         """Count customers filtered by role and status"""
         query = db.query(self.model).filter(self.model.status == status)
-        query = query.filter(func.json_each(self.model.roles).value == role)
+        query = query.filter(cast(self.model.roles, JSONB).contains([role]))
         
         if search:
             search_pattern = f"%{search}%"

@@ -3,21 +3,30 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List
 
-from sqlalchemy import String, DateTime, Numeric, ForeignKey, Text
+from sqlalchemy import String, DateTime, Numeric, ForeignKey, Text, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from typing import Optional, Dict
 
 class Quote(Base):
     __tablename__ = "quotes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    rfq_id: Mapped[str] = mapped_column(ForeignKey("rfqs.id"), nullable=False)
+    rfq_id: Mapped[str | None] = mapped_column(ForeignKey("rfqs.id"), nullable=True)  # Nullable for standalone quotes
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
     
     title: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="draft") # draft, sent, accepted, rejected, expired
+    quote_number: Mapped[str] = mapped_column(String, unique=True, nullable=False, default=lambda: f"QUO-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}")
+    
+    # Status fields
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft, confirmed, closed, discarded
+    accounting_status: Mapped[str | None] = mapped_column(String, nullable=True)  # unpaid, paid (null for draft)
+    version: Mapped[int] = mapped_column(Integer, default=1)  # Version number for tracking changes
+    
+    # Tax setting (order-level)
+    tax_setting: Mapped[str] = mapped_column(String(20), default="taxable_5")  # taxable_5, taxable_10, non_taxable, tax_exempt
     
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
@@ -65,4 +74,15 @@ class QuoteItem(Base):
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     # Relationships
+    # Relationships
     quote: Mapped["Quote"] = relationship(back_populates="items")
+    rfq_item: Mapped["RFQItem"] = relationship("RFQItem", primaryjoin="foreign(QuoteItem.rfq_item_id) == remote(RFQItem.id)", viewonly=True)
+
+    @property
+    def source_rfq_info(self) -> Optional[Dict[str, str]]:
+        if self.rfq_item and self.rfq_item.version and self.rfq_item.version.rfq:
+            return {
+                "rfq_no": self.rfq_item.version.rfq.rfq_no,
+                "project_name": self.rfq_item.version.rfq.project_name
+            }
+        return None

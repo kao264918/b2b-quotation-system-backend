@@ -213,7 +213,7 @@ def delete_rfq(
     db: Session = Depends(get_db),
     id: str
 ) -> None:
-    """Delete RFQ and all versions. Only allowed in DRAFT or VENDOR_QUOTING status."""
+    """Delete RFQ and all versions. Allowed in ANY status (Soft Delete)."""
     try:
         if not rfq_crud.delete_rfq(db, rfq_id=id):
             raise HTTPException(status_code=404, detail="RFQ not found")
