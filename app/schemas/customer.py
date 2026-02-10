@@ -19,12 +19,12 @@ class CustomerBase(BaseModel):
             raise ValueError('統一編號至少需要 8 碼')
         return v
 
-    # Address Information (all optional)
-    address_line1: Optional[str] = None
+    # Address Information
+    address_line1: str
     address_line2: Optional[str] = None
-    city: Optional[str] = None
+    city: str
     postal_code: Optional[str] = None
-    country: Optional[str] = None
+    country: str
 
     # Primary Contact (required: contact_name, contact_email)
     contact_name: str
