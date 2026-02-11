@@ -1,6 +1,10 @@
-from typing import List, Optional
+import json
+from typing import Annotated, List, Optional
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+DEFAULT_CORS_ORIGIN_REGEX = r"^https://([a-z0-9-]+-)?b2b-quotation-system\.vercel\.app$"
 
 
 class Settings(BaseSettings):
@@ -20,16 +24,21 @@ class Settings(BaseSettings):
 
     # CORS
     # Tip: In .env provide JSON: CORS_ORIGINS=["http://localhost:5173","https://your-app.vercel.app"]
-    CORS_ORIGINS: List[str] = [
+    CORS_ORIGINS: Annotated[List[str], NoDecode] = [
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:3000",
     ]
 
-    # Vercel preview domain regex — restrict to YOUR project prefix only.
-    # Matches preview hosts that include "b2b-quotation-system" in a single hostname label.
-    # Override via env var CORS_ORIGIN_REGEX in production for stricter control.
-    CORS_ORIGIN_REGEX: Optional[str] = r"https://[a-z0-9-]*b2b-quotation-system[a-z0-9-]*\.vercel\.app"
+    # Vercel preview domain regex — restrict to b2b-quotation-system project host only.
+    # Expected host examples:
+    # - b2b-quotation-system.vercel.app
+    # - dev-b2b-quotation-system.vercel.app
+    # - feat-123-b2b-quotation-system.vercel.app
+    CORS_ORIGIN_REGEX: Optional[str] = DEFAULT_CORS_ORIGIN_REGEX
+    # Backward compatibility for a common typo in env var name.
+    # If this is set and CORS_ORIGIN_REGEX isn't explicitly overridden, it will be used.
+    CORS_ORIGINS_REGEX: Optional[str] = None
 
     # Frontend base URL (used to construct email links)
     APP_BASE_URL: str = "http://localhost:5173"
@@ -52,6 +61,48 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value):
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return [str(origin).rstrip("/") for origin in value if str(origin).strip()]
+
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return []
+
+            # Prefer JSON array, but also accept comma-separated string
+            # to reduce config mistakes on Railway/Vercel.
+            if raw.startswith("["):
+                parsed = json.loads(raw)
+                if not isinstance(parsed, list):
+                    raise ValueError("CORS_ORIGINS JSON must be an array")
+                return [str(origin).rstrip("/") for origin in parsed if str(origin).strip()]
+
+            return [part.strip().rstrip("/") for part in raw.split(",") if part.strip()]
+
+        raise ValueError("Invalid CORS_ORIGINS format")
+
+    @field_validator("APP_BASE_URL", mode="before")
+    @classmethod
+    def normalize_app_base_url(cls, value):
+        if isinstance(value, str):
+            return value.rstrip("/")
+        return value
+
+    @model_validator(mode="after")
+    def apply_legacy_cors_regex_alias(self):
+        if (
+            self.CORS_ORIGINS_REGEX
+            and (not self.CORS_ORIGIN_REGEX or self.CORS_ORIGIN_REGEX == DEFAULT_CORS_ORIGIN_REGEX)
+        ):
+            self.CORS_ORIGIN_REGEX = self.CORS_ORIGINS_REGEX
+        return self
 
 
 settings = Settings()

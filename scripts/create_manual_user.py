@@ -46,4 +46,18 @@ def create_manual_user(email, password):
         db.close()
 
 if __name__ == "__main__":
-    create_manual_user("kao264918@gmail.com", "Test@1234")
+    import getpass
+    
+    print("--- Create Manual User ---")
+    email = input("Enter Email: ").strip()
+    if not email:
+        print("Error: Email is required.")
+        sys.exit(1)
+    
+    # Secure password input
+    password = getpass.getpass("Enter Password: ").strip()
+    if not password:
+        print("Error: Password is required.")
+        sys.exit(1)
+        
+    create_manual_user(email, password)
