@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 DEFAULT_CORS_ORIGIN_REGEX = r"^https://([a-z0-9-]+-)?b2b-quotation-system\.vercel\.app$"
 
 
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "B2B Quotation System"
     API_V1_STR: str = "/api/v1"
