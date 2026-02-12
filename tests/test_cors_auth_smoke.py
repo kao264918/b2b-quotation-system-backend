@@ -48,7 +48,7 @@ def test_cors_and_auth_smoke(test_user_credentials):
     client = TestClient(app)
 
     allowed_origin = "http://localhost:5173"
-    preview_origin = "https://dev-b2b-quotation-system-preview.vercel.app"
+    preview_origin = "https://feat-123-b2b-quotation-system.vercel.app"
     blocked_origin = "https://evil.example.com"
 
     # 1) CSRF token endpoint should be reachable.

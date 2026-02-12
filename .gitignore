@@ -23,3 +23,7 @@ wheels/
 .venv/
 venv/
 ENV/
+# Sensitive Scripts
+scripts/verify_*.py
+scripts/create_test_users.py
+scripts/seed_*.py
