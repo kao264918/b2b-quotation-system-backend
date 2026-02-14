@@ -9,7 +9,7 @@ from app.database import get_db
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.Quote])
+@router.get("", response_model=List[schemas.Quote])
 def read_quotes(
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -17,7 +17,7 @@ def read_quotes(
 ) -> Any:
     return crud.quote.get_multi(db, skip=skip, limit=limit)
 
-@router.post("/", response_model=schemas.Quote)
+@router.post("", response_model=schemas.Quote)
 def create_quote(
     *,
     db: Session = Depends(get_db),
