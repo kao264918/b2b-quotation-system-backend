@@ -47,9 +47,20 @@ class ProdVerifier:
                 csrf_token = self.session.cookies.get("csrf_token")
                 if csrf_token:
                     self.session.headers.update({"X-CSRF-Token": csrf_token})
-                    log(f"✅ CSRF Token set: {csrf_token[:10]}...")
+                    log(f"✅ CSRF Token set: {csrf_token[:10]}..." if csrf_token else "⚠️ No CSRF Token found")
                 else:
                     log("⚠️ Warning: No CSRF cookie found", False)
+
+                # DEBUG: Print cookies
+                print("DEBUG: Cookies after login:", self.session.cookies.get_dict())
+
+                # Verify Session with /auth/me
+                me_res = self.session.get(f"{BASE_URL}/auth/me")
+                if me_res.status_code == 200:
+                    log(f"✅ Auth Me successful: {me_res.json().get('email')}")
+                else:
+                    log(f"❌ Auth Me Failed: {me_res.status_code} {me_res.text}", False)
+
                 return True
             else:
                 log(f"❌ Login failed: {res.status_code} - {res.text}", False)
@@ -74,7 +85,7 @@ class ProdVerifier:
             "country": "TW",
             "billing_email": "billing@example.com"
         }
-        res = self.session.post(f"{BASE_URL}/customers/", json=create_payload)
+        res = self.session.post(f"{BASE_URL}/customers", json=create_payload)
         if res.status_code not in [200, 201]:
             log(f"❌ Create Customer Failed: {res.status_code} {res.text}", False)
             return None

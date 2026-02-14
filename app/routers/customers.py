@@ -8,7 +8,7 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/", response_model=schemas.CustomerListResponse)
+@router.get("", response_model=schemas.CustomerListResponse)
 def read_customers(
     db: Session = Depends(get_db),
     page: int = 1,
@@ -64,7 +64,7 @@ def read_customers(
 
 
 
-@router.post("/", response_model=schemas.Customer)
+@router.post("", response_model=schemas.Customer)
 def create_customer(
     *,
     db: Session = Depends(get_db),
