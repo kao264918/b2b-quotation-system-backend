@@ -3,7 +3,8 @@ import json
 import time
 
 # Configuration
-BASE_URL = "https://b2b-quotation-system.vercel.app/api/v1"
+# Configuration
+BASE_URL = "https://b2b-quotation-system-backend.up.railway.app/api/v1"
 EMAIL = "kao264918@gmail.com"
 PASSWORD = "Password123"
 
@@ -129,7 +130,7 @@ class ProdVerifier:
             "phone": "0987654321",
             # contacts list is optional
         }
-        res = self.session.post(f"{BASE_URL}/vendors/", json=payload)
+        res = self.session.post(f"{BASE_URL}/vendors", json=payload)
         if res.status_code not in [200, 201]:
             log(f"❌ Create Vendor Failed: {res.status_code} {res.text}", False)
             return None
@@ -139,9 +140,9 @@ class ProdVerifier:
         log(f"✅ Created Vendor: {vendor_id}")
 
         # Read List (Test Trailing Slash)
-        res = self.session.get(f"{BASE_URL}/vendors/?skip=0&limit=10")
+        res = self.session.get(f"{BASE_URL}/vendors?skip=0&limit=10")
         if res.status_code == 200:
-             log(f"✅ Read Vendor List (Slash check)")
+             log(f"✅ Read Vendor List")
         else:
              log(f"❌ Read Vendor List Failed: {res.status_code}", False)
 
@@ -183,7 +184,7 @@ class ProdVerifier:
             "city": "RFQ City",
             "country": "TW",
         }
-        cust_res = self.session.post(f"{BASE_URL}/customers/", json=cust_payload)
+        cust_res = self.session.post(f"{BASE_URL}/customers", json=cust_payload)
         if cust_res.status_code not in [200, 201]:
             log("❌ Prerequisite: Failed to create customer for RFQ test", False)
             return
@@ -207,7 +208,7 @@ class ProdVerifier:
         
         # Test both /rfqs and /rfqs/ just to be sure, but we expect /rfqs/ to be the corrected one if Python requests doesn't auto-redirect safely with POST
         # Actually Vercel rewrite regex now handles it. Backend likely needs slash.
-        res = self.session.post(f"{BASE_URL}/rfqs/", json=rfq_payload)
+        res = self.session.post(f"{BASE_URL}/rfqs", json=rfq_payload)
         
         rfq_id = None
         if res.status_code in [200, 201]:
