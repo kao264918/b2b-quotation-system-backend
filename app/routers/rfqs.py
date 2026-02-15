@@ -58,7 +58,7 @@ def validate_output_dims(items) -> list[dict]:
     return errors
 
 
-@router.post("/", response_model=RFQResponse, status_code=201)
+@router.post("", response_model=RFQResponse, status_code=201)
 def create_rfq(
     *,
     db: Session = Depends(get_db),
@@ -80,7 +80,7 @@ def create_rfq(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/", response_model=RFQListResponse)
+@router.get("", response_model=RFQListResponse)
 def list_rfqs(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1),

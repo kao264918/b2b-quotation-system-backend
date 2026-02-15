@@ -7,7 +7,7 @@ from app.database import get_db
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.TaxCategory])
+@router.get("", response_model=List[schemas.TaxCategory])
 def read_tax_categories(
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -15,7 +15,7 @@ def read_tax_categories(
 ) -> Any:
     return crud.tax_category.get_multi(db, skip=skip, limit=limit)
 
-@router.post("/", response_model=schemas.TaxCategory)
+@router.post("", response_model=schemas.TaxCategory)
 def create_tax_category(
     *,
     db: Session = Depends(get_db),

@@ -10,7 +10,7 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/", response_model=List[schemas.Invoice])
+@router.get("", response_model=List[schemas.Invoice])
 def read_invoices(
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -20,7 +20,7 @@ def read_invoices(
     return crud.invoice.get_multi(db, skip=skip, limit=limit)
 
 
-@router.post("/", response_model=schemas.Invoice)
+@router.post("", response_model=schemas.Invoice)
 def create_invoice(
     *,
     db: Session = Depends(get_db),

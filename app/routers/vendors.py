@@ -7,7 +7,7 @@ from app.database import get_db
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.Vendor])
+@router.get("", response_model=List[schemas.Vendor])
 def read_vendors(
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -20,7 +20,7 @@ def read_vendors(
     """
     return crud.vendor.get_multi(db, skip=skip, limit=limit, search=search)
 
-@router.post("/", response_model=schemas.Vendor)
+@router.post("", response_model=schemas.Vendor)
 def create_vendor(
     *,
     db: Session = Depends(get_db),
