@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     BREVO_API_KEY: Optional[str] = None
     BREVO_SENDER_EMAIL: Optional[str] = None
     BREVO_SENDER_NAME: Optional[str] = None
+    
+    # Admin notification emails for access requests (JSON array)
+    ADMIN_NOTIFICATION_EMAILS: Annotated[List[str], NoDecode] = []
 
     # Rate limiting (Redis)
     REDIS_URL: Optional[str] = None
@@ -95,6 +98,27 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.rstrip("/")
         return value
+    
+    @field_validator("ADMIN_NOTIFICATION_EMAILS", mode="before")
+    @classmethod
+    def parse_admin_emails(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [str(email).strip() for email in value if str(email).strip()]
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return []
+            # JSON array format
+            if raw.startswith("["):
+                parsed = json.loads(raw)
+                if not isinstance(parsed, list):
+                    raise ValueError("ADMIN_NOTIFICATION_EMAILS must be an array")
+                return [str(email).strip() for email in parsed if str(email).strip()]
+            # Comma-separated fallback
+            return [str(email).strip() for email in raw.split(",") if email.strip()]
+        raise ValueError(f"ADMIN_NOTIFICATION_EMAILS: unsupported type {type(value)}")
 
     @model_validator(mode="after")
     def apply_legacy_cors_regex_alias(self):

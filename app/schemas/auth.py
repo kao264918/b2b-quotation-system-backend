@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from pydantic import BaseModel, EmailStr, field_validator
 from uuid import UUID
 from typing import Optional
@@ -37,6 +38,8 @@ class LoginRequest(BaseModel):
 class InviteRequest(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
+    company_name: Optional[str] = None
+    note: Optional[str] = None
 
 
 class SetPasswordRequest(BaseModel):
@@ -56,11 +59,19 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str
     password: str
+    full_name: Optional[str] = None
 
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
         return _validate_password_strength(v)
+
+
+class VerifyTokenResponse(BaseModel):
+    valid: bool
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_verified: bool = False
 
 
 class UserResponse(BaseModel):
@@ -69,10 +80,32 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     is_active: bool
     is_superuser: bool
+    role: Optional[str] = None
+    status: Optional[str] = None
     access_token: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class AdminUserResponse(BaseModel):
+    id: UUID
+    email: EmailStr
+    full_name: Optional[str] = None
+    company_name: Optional[str] = None
+    status: str
+    role: str
+    is_superuser: bool
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminUserUpdate(BaseModel):
+    role: Optional[str] = None
+    status: Optional[str] = None
+    is_superuser: Optional[bool] = None
 
 
 class Token(BaseModel):

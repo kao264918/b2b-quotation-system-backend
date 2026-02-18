@@ -182,6 +182,8 @@ app.add_middleware(RequestIdMiddleware)
 
 # Public Routers
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
+from app.routers import registration
+app.include_router(registration.router, prefix=f"{settings.API_V1_STR}", tags=["registration"])
 app.include_router(
     customers.router,
     prefix=f"{settings.API_V1_STR}/customers",
