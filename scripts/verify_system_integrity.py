@@ -1,3 +1,5 @@
+import sys
+import os
 import requests
 import json
 import time
@@ -7,7 +9,68 @@ BASE_URL = "http://localhost:8000/api/v1"
 def log(msg, status="INFO"):
     print(f"[{status}] {msg}")
 
-def test_customer_flow():
+# Add parent directory to path to allow importing app
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+from app.database import SessionLocal
+from app.models.user import User
+from app.models.user_status import UserStatus, UserRole
+from app.crud.user import user as crud_user
+
+def setup_and_login(session):
+    """
+    Ensures a test admin user exists and logs in.
+    """
+    email = "integration_test_admin@example.com"
+    password = "password123"
+    
+    db = SessionLocal()
+    try:
+        user = crud_user.get_by_email(db, email=email)
+        if not user:
+            log(f"Creating test admin user: {email}")
+            user = User(
+                email=email,
+                hashed_password=crud_user.get_password_hash(password),
+                full_name="Integration Test Admin",
+                is_active=True,
+                is_superuser=True,
+                is_verified=True,
+                status=UserStatus.ACTIVE,
+                role=UserRole.OWNER
+            )
+            db.add(user)
+            db.commit()
+        else:
+             # Ensure active/admin
+             if not user.is_active or not user.is_superuser:
+                 user.is_active = True
+                 user.is_superuser = True
+                 user.status = UserStatus.ACTIVE
+                 user.role = UserRole.OWNER
+                 db.commit()
+    except Exception as e:
+        log(f"DB Error during setup: {e}", "CRITICAL")
+        return False
+    finally:
+        db.close()
+
+    # Login
+    login_data = {
+        "email": email,
+        "password": password,
+        "remember_me": False
+    }
+    
+    resp = session.post(f"{BASE_URL}/auth/login", json=login_data)
+    if resp.status_code == 200:
+        log(f"Login Successful as {email}")
+        return True
+    else:
+        log(f"Login Failed: {resp.status_code} {resp.text}", "CRITICAL")
+        return False
+
+def test_customer_flow(session):
     log("--- Testing Customer Flow ---")
     
     # 1. Create Customer
@@ -23,7 +86,7 @@ def test_customer_flow():
         "country": "TW"
     }
     
-    resp = requests.post(f"{BASE_URL}/customers/", json=customer_data)
+    resp = session.post(f"{BASE_URL}/customers/", json=customer_data)
     if resp.status_code != 200:
         log(f"Create Customer Failed: {resp.text}", "ERROR")
         return None
@@ -38,7 +101,7 @@ def test_customer_flow():
          log("Customer Role Assignment Verified")
 
     # 2. Get Customer List
-    resp = requests.get(f"{BASE_URL}/customers/?page=1&page_size=10")
+    resp = session.get(f"{BASE_URL}/customers/?page=1&page_size=10")
     if resp.status_code != 200:
         log("Get Customers Failed", "ERROR")
     else:
@@ -46,8 +109,19 @@ def test_customer_flow():
 
     return customer['id']
 
-def test_vendor_flow():
+
+
+
+def test_vendor_flow(session=None):
     log("--- Testing Vendor Flow (via Unified Customer API) ---")
+    
+    s = session if session else requests.Session()
+    if not session:
+        # Get CSRF if new session
+        csrf_resp = s.get(f"{BASE_URL}/auth/csrf")
+        if csrf_resp.status_code == 200:
+            s.headers.update({"x-csrf-token": csrf_resp.json().get("csrf_token")})
+
     suffix = int(time.time())
     # Create vendor using Customer API with roles
     vendor_data = {
@@ -63,7 +137,7 @@ def test_vendor_flow():
         "roles": ["vendor"]
     }
     
-    resp = requests.post(f"{BASE_URL}/customers/", json=vendor_data)
+    resp = s.post(f"{BASE_URL}/customers/", json=vendor_data)
     if resp.status_code != 200:
         # Check if 200 or 201
         log(f"Create Vendor (Customer) Failed: {resp.status_code} {resp.text}", "ERROR")
@@ -80,7 +154,7 @@ def test_vendor_flow():
 
     return vendor['id']
 
-def test_catalog_flow():
+def test_catalog_flow(session):
     log("--- Testing Catalog Flow ---")
     
     # 1. Create Item
@@ -94,7 +168,7 @@ def test_catalog_flow():
         "unit": "PC"
     }
     
-    resp = requests.post(f"{BASE_URL}/catalog-items/", json=item_data)
+    resp = session.post(f"{BASE_URL}/catalog-items/", json=item_data)
     if resp.status_code != 201 and resp.status_code != 200:
          log(f"Create Catalog Item Failed: {resp.status_code} {resp.text}", "ERROR")
          return None
@@ -103,7 +177,7 @@ def test_catalog_flow():
     log(f"Created Catalog Item: {item['id']}")
     return item['id']
 
-def test_rfq_flow(customer_id, vendor_id, item_id):
+def test_rfq_flow(session, customer_id, vendor_id, item_id):
     log("--- Testing RFQ Flow ---")
     
     # 1. Create RFQ
@@ -114,7 +188,7 @@ def test_rfq_flow(customer_id, vendor_id, item_id):
         "project_name": f"Integration Test Project {suffix}",
         "due_date": "2026-12-31"
     }
-    resp = requests.post(f"{BASE_URL}/rfqs/", json=rfq_data)
+    resp = session.post(f"{BASE_URL}/rfqs/", json=rfq_data)
     if resp.status_code != 201 and resp.status_code != 200:
         log(f"Create RFQ Failed: {resp.text}", "ERROR")
         return None
@@ -125,23 +199,6 @@ def test_rfq_flow(customer_id, vendor_id, item_id):
     
     # 2. Add Items
     if item_id:
-        items_payload = [
-            {
-                "catalog_item_id": item_id,
-                "quantity": 5,
-                "unit_price": 900,
-                "description": "Test item in RFQ",
-                "name": "Integration Test Item (In RFQ)", # RFQ item needs name 
-                "item_type": "product"
-            }
-        ]
-        # RFQ update usually uses a PUT to /rfqs/{id}/items or similar. 
-        # Checking schema RFQUpdate has `items`.
-        # Assuming PUT /rfqs/{id} updates the whole RFQ or just parts. 
-        # But wait, looking at router usually:
-        # app.include_router(rfqs.router...)
-        # Let's try PUT to /rfqs/{id} with items in body first as consistent with schema RFQUpdate
-        
         update_payload = {
             "items": [
                 {
@@ -161,7 +218,7 @@ def test_rfq_flow(customer_id, vendor_id, item_id):
             ]
         }
         
-        resp = requests.put(f"{BASE_URL}/rfqs/{rfq_id}", json=update_payload)
+        resp = session.put(f"{BASE_URL}/rfqs/{rfq_id}", json=update_payload)
         
         if resp.status_code != 200:
             log(f"Add Items (Update RFQ) Failed: {resp.text}", "ERROR")
@@ -177,7 +234,7 @@ def test_rfq_flow(customer_id, vendor_id, item_id):
             
     # 3. Change Status
     status_payload = {"status": "vendor_quoting"}
-    resp = requests.patch(f"{BASE_URL}/rfqs/{rfq_id}/status", json=status_payload)
+    resp = session.patch(f"{BASE_URL}/rfqs/{rfq_id}/status", json=status_payload)
     if resp.status_code != 200:
         log(f"Status Update Failed: {resp.text}", "ERROR")
     else:
@@ -190,14 +247,28 @@ if __name__ == "__main__":
     try:
         log("Starting System Verification...")
         
-        cid = test_customer_flow()
-        vid = test_vendor_flow()
+        session = requests.Session()
+        # Get CSRF
+        csrf_resp = session.get(f"{BASE_URL}/auth/csrf")
+        if csrf_resp.status_code == 200:
+            csrf = csrf_resp.json().get("csrf_token")
+            session.headers.update({"x-csrf-token": csrf})
+            log(f"Got CSRF Token: {csrf[:10]}...")
+        else:
+            log("Failed to get CSRF token", "WARNING")
+            
+        # Try to login
+        if not setup_and_login(session):
+            log("Aborting verification due to login failure", "CRITICAL")
+            exit(1)
+
+        cid = test_customer_flow(session)
+        vid = test_vendor_flow(session)
         
         if cid and vid:
-            iid = test_catalog_flow()
-            test_rfq_flow(cid, vid, iid)
+            iid = test_catalog_flow(session)
+            test_rfq_flow(session, cid, vid, iid)
         
         log("Verification Completed")
     except Exception as e:
         log(f"Script Error: {e}", "CRITICAL")
-

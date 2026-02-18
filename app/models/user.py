@@ -1,5 +1,6 @@
-from sqlalchemy import Boolean, Column, String, DateTime, ForeignKey
+from sqlalchemy import Boolean, Column, String, DateTime, Enum, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
+from app.models.user_status import UserStatus, UserRole
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -19,6 +20,10 @@ class User(Base):
     is_verified = Column(Boolean, default=False) # Deprecated or synced with email_verified_at
     email_verified_at = Column(DateTime(timezone=True), nullable=True)
     is_superuser = Column(Boolean, default=False)
+    
+    # New fields for MVP
+    status = Column(Enum(UserStatus), default=UserStatus.ACTIVE, nullable=False)
+    role = Column(Enum(UserRole), default=UserRole.MEMBER, nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

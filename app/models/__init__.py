@@ -19,4 +19,6 @@ from .audit_log import AuditLog
 from .user import User
 from .session import RefreshSession
 from .token import VerificationToken, PasswordResetToken
+from .user_status import UserStatus, UserRole
+from .registration_request import RegistrationRequest, RegistrationStatus
 
