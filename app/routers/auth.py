@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.auth import LoginRequest, UserResponse, InviteRequest, SetPasswordRequest, ForgotPasswordRequest, ResetPasswordRequest
+from app.schemas.auth import LoginRequest, UserResponse, InviteRequest, SetPasswordRequest, ForgotPasswordRequest, ResetPasswordRequest, VerifyTokenResponse
 from app.crud import user as crud_user
 from app.models.session import RefreshSession
 from app.models.user import User
 from app.models.token import VerificationToken, PasswordResetToken
+from app.models.user_status import UserStatus, UserRole
+from app.models.registration_request import RegistrationRequest, RegistrationStatus
 from app.config import settings
 from app.core.rate_limit import rate_limiter
 from app.services.email import email_service
@@ -49,18 +51,7 @@ def set_csrf_cookie(response: Response, token: str, request: Request) -> None:
         path="/",
     )
 
-def get_client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-def require_rate_limit(key: str, limit: int, window_seconds: int) -> None:
-    if not rate_limiter.check_and_increment(key, limit=limit, window_seconds=window_seconds):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests. Please try again later.",
-        )
+from app.core.rate_limit import get_client_ip, require_rate_limit
 
 @router.post("/login", response_model=UserResponse)
 def login(
@@ -83,6 +74,20 @@ def login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user"
+        )
+    
+    # Check Status (New for MVP)
+    from app.models.user_status import UserStatus
+    if user.status == UserStatus.DISABLED:
+         raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled"
+        )
+    # Allow PENDING_PASSWORD to login? No.
+    if user.status == UserStatus.PENDING_PASSWORD:
+         raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="PASSWORD_NOT_SET"
         )
 
     # Create session
@@ -144,6 +149,7 @@ def login(
         full_name=user.full_name,
         is_active=user.is_active,
         is_superuser=user.is_superuser,
+        access_token=session_token if not settings.ENVIRONMENT == "production" else None,
     )
 
 @router.get("/me", response_model=UserResponse)
@@ -197,7 +203,9 @@ def invite_user(
         is_active=True, # Active but not verified? Or False? Requirements say invite-only. Usually pending=True.
         # Let's set is_active=True so they can login AFTER set password.
         is_verified=False,
-        email_verified_at=None
+        email_verified_at=None,
+        status=UserStatus.PENDING_PASSWORD,
+        role=UserRole.MEMBER
     )
     db.add(user_in)
     db.commit()
@@ -206,7 +214,7 @@ def invite_user(
     # Create Token
     token_str = secrets.token_urlsafe(32)
     token_hash = get_session_token_hash(token_str)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     
     ver_token = VerificationToken(
         user_id=user_in.id,
@@ -217,7 +225,7 @@ def invite_user(
     db.commit()
     
     # Send Email
-    background_tasks.add_task(email_service.send_verification_email, user_in.email, token_str)
+    background_tasks.add_task(email_service.send_welcome_email, user_in.email, token_str)
     
     # Audit log for invite
     crud_audit_log.log_action(
@@ -262,36 +270,69 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     # The frontend already has the token from the URL query parameter.
     return {"message": "Email verified successfully"}
 
+@router.get("/verify-token-info", response_model=VerifyTokenResponse)
+def verify_token_info(token: str, db: Session = Depends(get_db)):
+    """
+    Check if a token is valid (VerificationToken OR PasswordResetToken) and return associated user info.
+    Used by frontend to decide if it needs to ask for full_name.
+    """
+    token_hash = get_session_token_hash(token)
+    
+    # 1. Check VerificationToken (Invite / Setup)
+    ver_token = db.query(VerificationToken).filter(VerificationToken.token_hash == token_hash).first()
+    if ver_token and ver_token.expires_at > datetime.now(timezone.utc):
+        user = db.query(User).filter(User.id == ver_token.user_id).first()
+        if user:
+            return {
+                "valid": True,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_verified": user.is_verified
+            }
+
+    # 2. Check PasswordResetToken (Forgot Password)
+    reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
+    if reset_token and reset_token.expires_at > datetime.now(timezone.utc) and not reset_token.used_at:
+        user = db.query(User).filter(User.id == reset_token.user_id).first()
+        if user:
+            return {
+                "valid": True,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_verified": user.is_verified
+            }
+            
+    return {"valid": False}
+
+
 @router.post("/set-password")
 def set_password(payload: SetPasswordRequest, db: Session = Depends(get_db)):
+    # Legacy endpoint, kept for compatibility if needed, but email links now point to reset-password.
+    # Logic similar to reset_password but only for VerificationToken.
     token_hash = get_session_token_hash(payload.token)
     ver_token = db.query(VerificationToken).filter(VerificationToken.token_hash == token_hash).first()
     
     if not ver_token:
         raise HTTPException(status_code=400, detail="Invalid token")
         
-    # Expiry check
     if ver_token.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Token expired")
     
-    # Check if used
-    if ver_token.used_at:
-        raise HTTPException(status_code=400, detail="Token already used")
+    # Check if used - VerificationToken doesn't have used_at usually, it's deleted.
+    # But if we added used_at, check it. The current model might not have used_at for VerificationToken.
+    # We delete it on use.
     
     user = db.query(User).filter(User.id == ver_token.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    # Set password
     user.hashed_password = crud_user.user.get_password_hash(payload.password)
-    user.is_active = True # Activate
-    user.email_verified_at = datetime.now(timezone.utc) # Ensure verified
     user.is_verified = True
-    
-    # Consume token
-    ver_token.used_at = datetime.now(timezone.utc)
-    db.add(ver_token)
-    
+    user.email_verified_at = datetime.now(timezone.utc)
+    if user.status == UserStatus.PENDING_PASSWORD:
+        user.status = UserStatus.ACTIVE
+        
+    db.delete(ver_token)
     db.add(user)
     db.commit()
     
@@ -335,30 +376,59 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
     require_rate_limit(f"reset:ip:{client_ip}", limit=10, window_seconds=60)
 
     token_hash = get_session_token_hash(payload.token)
+    
+    # Try finding either token type
+    ver_token = db.query(VerificationToken).filter(VerificationToken.token_hash == token_hash).first()
     reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
     
-    if not reset_token:
-        raise HTTPException(status_code=400, detail="Invalid token")
-        
-    if reset_token.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="Token expired")
-        
-    if reset_token.used_at:
-        raise HTTPException(status_code=400, detail="Token already used")
-        
-    user = db.query(User).filter(User.id == reset_token.user_id).first()
+    target_token = None
+    token_type = None # "verification" or "reset"
+    
+    if ver_token:
+        # Check expiry for VerificationToken
+        if ver_token.expires_at > datetime.now(timezone.utc):
+            target_token = ver_token
+            token_type = "verification"
+    elif reset_token:
+        # Check expiry and used status for PasswordResetToken
+        if reset_token.expires_at > datetime.now(timezone.utc) and not reset_token.used_at:
+            target_token = reset_token
+            token_type = "reset"
+            
+    if not target_token:
+        # If neither found or valid
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    user = db.query(User).filter(User.id == target_token.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
     # Set new password
     user.hashed_password = crud_user.user.get_password_hash(payload.password)
     
-    # Mark used
-    reset_token.used_at = datetime.now(timezone.utc)
-    db.add(reset_token)
+    # Activate / Verify if needed (Logic for Invite flow)
+    # If user was PENDING_PASSWORD, they become ACTIVE
+    if user.status == UserStatus.PENDING_PASSWORD:
+        user.status = UserStatus.ACTIVE
     
-    # Optional: Revoke all existing sessions
-    db.query(RefreshSession).filter(RefreshSession.user_id == user.id).delete()
+    # Mark as verified if not already
+    if not user.is_verified:
+        user.is_verified = True
+        user.email_verified_at = datetime.now(timezone.utc)
+
+    # Update full_name if provided
+    if payload.full_name:
+        user.full_name = payload.full_name
+    
+    # Handle Token Cleanup
+    if token_type == "verification":
+        db.delete(target_token) # Destroy verification token
+    else:
+        # Mark reset token used
+        target_token.used_at = datetime.now(timezone.utc)
+        db.add(target_token)
+        # Optional: Revoke all existing sessions
+        db.query(RefreshSession).filter(RefreshSession.user_id == user.id).delete()
     
     db.add(user)
     db.commit()
@@ -368,7 +438,7 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
         db,
         entity_type="user",
         entity_id=str(user.id),
-        action="password_reset",
+        action="reset_password",
         actor=user.email,
     )
     
@@ -389,10 +459,57 @@ def request_access(
     if existing:
         # If user exists, we don't need to do anything, or maybe notify them "You have an account"
         # For security/privacy, we can just say "Request received"
-        pass
+        return {"message": "Request received"}
     
-    # 2. Send Email to Admin
-    background_tasks.add_task(email_service.send_access_request_email, payload.email)
+    # 2. Persist Request to DB
+    # Check if request already exists (any status)
+    existing_request = db.query(RegistrationRequest).filter(
+        RegistrationRequest.email == payload.email
+    ).first()
+    
+    if existing_request:
+        # Check if rejected within last 1 hour
+        if existing_request.status == RegistrationStatus.REJECTED:
+            # Ensure updated_at is aware or naive compatible. DB is timezone=True.
+            last_update = existing_request.updated_at or existing_request.created_at
+            if last_update:
+                # If last_update is naive, make it aware (assume UTC if stored as such)
+                if last_update.tzinfo is None:
+                    last_update = last_update.replace(tzinfo=timezone.utc)
+                
+                if datetime.now(timezone.utc) - last_update < timedelta(hours=1):
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="您的申請已被拒絕，請於 1 小時後再嘗試。"
+                    )
+
+        existing_request.full_name = payload.full_name or ""
+        existing_request.company_name = payload.company_name or ""
+        existing_request.note = payload.note
+        existing_request.status = RegistrationStatus.PENDING # Reset to pending if it was rejected/approved
+        existing_request.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    else:
+        # Create new request
+        new_request = RegistrationRequest(
+            email=payload.email,
+            full_name=payload.full_name or "",
+            company_name=payload.company_name or "",
+            note=payload.note,
+            status=RegistrationStatus.PENDING
+        )
+        db.add(new_request)
+        db.commit()
+        db.refresh(new_request)
+
+    # 3. Send Email to Admin
+    background_tasks.add_task(
+        email_service.send_access_request_email,
+        payload.email,
+        payload.full_name,
+        payload.company_name,
+        payload.note,
+    )
     
     return {"message": "Request received"}
 

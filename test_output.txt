@@ -1,0 +1,85 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/kevinkao/Documents/software building/b2b-quotation-project/b2b-quotation-system-backend
+plugins: anyio-4.12.1
+collected 2 items
+
+tests/test_strict_alignment.py 2026-02-17 23:37:58,188 - app.core.request_logging - INFO - POST /api/v1/auth/login -> 200
+2026-02-17 23:37:58,352 - app.main - WARNING - csrf_rejected
+2026-02-17 23:37:58,352 - app.core.request_logging - INFO - POST /api/v1/auth/invite -> 403
+F2026-02-17 23:37:58,395 - app.main - WARNING - csrf_rejected
+2026-02-17 23:37:58,395 - app.core.request_logging - INFO - POST /api/v1/auth/invite -> 403
+F
+
+=================================== FAILURES ===================================
+______________________ test_invite_flow_strict_alignment _______________________
+
+client = <starlette.testclient.TestClient object at 0x10d7e5010>
+db = <sqlalchemy.orm.session.Session object at 0x10d7e7b60>
+superuser_token_headers = {'Authorization': 'Bearer bcQOVV6yLMyyXi9kHmcL8wIxJzeimZ0LBpbgSMjZuKE'}
+
+    def test_invite_flow_strict_alignment(client, db: Session, superuser_token_headers):
+        # 1. Admin Invite User (No Name)
+        email = f"strict_test_{uuid.uuid4().hex[:8]}@example.com"
+        invite_payload = {
+            "email": email,
+            "full_name": None,
+            "company_name": "Strict Co"
+        }
+        r = client.post("/api/v1/auth/invite", json=invite_payload, headers=superuser_token_headers)
+>       assert r.status_code == 200, f"Invite failed: {r.text}"
+E       AssertionError: Invite failed: {"detail":"CSRF token missing or invalid"}
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/test_strict_alignment.py:66: AssertionError
+------------------------------ Captured log setup ------------------------------
+INFO     app.core.request_logging:request_logging.py:32 POST /api/v1/auth/login -> 200
+------------------------------ Captured log call -------------------------------
+WARNING  app.main:main.py:99 csrf_rejected
+INFO     app.core.request_logging:request_logging.py:32 POST /api/v1/auth/invite -> 403
+_____________________ test_invite_flow_with_name_provided ______________________
+
+client = <starlette.testclient.TestClient object at 0x10d7e5010>
+db = <sqlalchemy.orm.session.Session object at 0x10d7e7b60>
+superuser_token_headers = {'Authorization': 'Bearer bcQOVV6yLMyyXi9kHmcL8wIxJzeimZ0LBpbgSMjZuKE'}
+
+    def test_invite_flow_with_name_provided(client, db: Session, superuser_token_headers):
+        # 1. Admin Invite User (With Name)
+        email = f"strict_test_named_{uuid.uuid4().hex[:8]}@example.com"
+        invite_payload = {
+            "email": email,
+            "full_name": "Predefined Name",
+            "company_name": "Strict Co"
+        }
+        r = client.post("/api/v1/auth/invite", json=invite_payload, headers=superuser_token_headers)
+>       assert r.status_code == 200
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/test_strict_alignment.py:123: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.main:main.py:99 csrf_rejected
+INFO     app.core.request_logging:request_logging.py:32 POST /api/v1/auth/invite -> 403
+=============================== warnings summary ===============================
+app/schemas/auth.py:77
+  /Users/kevinkao/Documents/software building/b2b-quotation-project/b2b-quotation-system-backend/app/schemas/auth.py:77: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class UserResponse(BaseModel):
+
+app/schemas/auth.py:91
+  /Users/kevinkao/Documents/software building/b2b-quotation-project/b2b-quotation-system-backend/app/schemas/auth.py:91: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AdminUserResponse(BaseModel):
+
+app/schemas/registration.py:13
+  /Users/kevinkao/Documents/software building/b2b-quotation-project/b2b-quotation-system-backend/app/schemas/registration.py:13: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class RegistrationRequestResponse(BaseModel):
+
+app/routers/registration.py:238
+  /Users/kevinkao/Documents/software building/b2b-quotation-project/b2b-quotation-system-backend/app/routers/registration.py:238: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class EmailLogResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_strict_alignment.py::test_invite_flow_strict_alignment - As...
+FAILED tests/test_strict_alignment.py::test_invite_flow_with_name_provided - ...
+======================== 2 failed, 4 warnings in 10.17s ========================

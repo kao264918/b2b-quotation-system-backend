@@ -50,7 +50,11 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
 
 
 def require_superuser(current_user: User = Depends(get_current_user)) -> User:
-    if not current_user.is_superuser:
+    is_admin = (
+        current_user.is_superuser
+        or getattr(current_user, 'role', None) in ('owner', 'admin')
+    )
+    if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",

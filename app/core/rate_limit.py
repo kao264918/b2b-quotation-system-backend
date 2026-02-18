@@ -85,3 +85,23 @@ def build_rate_limiter():
 
 
 rate_limiter = build_rate_limiter()
+
+
+# ── Shared helper functions ──────────────────────────────────
+
+def get_client_ip(request) -> str:
+    """Extract client IP from request, respecting X-Forwarded-For."""
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def require_rate_limit(key: str, limit: int, window_seconds: int) -> None:
+    """Check rate limit and raise 429 if exceeded."""
+    from fastapi import HTTPException, status as http_status
+    if not rate_limiter.check_and_increment(key, limit=limit, window_seconds=window_seconds):
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
+        )
