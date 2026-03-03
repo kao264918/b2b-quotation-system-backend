@@ -10,7 +10,6 @@ on:
         type: choice
         options:
           - prod
-          - dev
   push:
     branches: [main, develop]
     paths:
