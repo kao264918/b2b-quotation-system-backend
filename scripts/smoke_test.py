@@ -1,167 +1,345 @@
 import argparse
-import requests
 import json
+import os
 import sys
+from dataclasses import dataclass, field
+from typing import Any
 
-# Default Credentials (from verify_prod_api.py)
-EMAIL = "kao264918@gmail.com"
-PASSWORD = "Password123"
+import requests
+
+
+DEFAULT_EMAIL = "kao264918@gmail.com"
+DEFAULT_PASSWORD = "Password123"
+
+BASE_URLS = {
+    "dev": {
+        "direct": "http://localhost:8000/api/v1",
+        "proxy": "https://dev-b2b-quotation-system.vercel.app/api/v1",
+    },
+    "prod": {
+        "direct": "https://b2b-quotation-system-backend-production.up.railway.app/api/v1",
+        "proxy": "https://b2b-quotation-system.vercel.app/api/v1",
+    },
+}
+
 
 class Color:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    RESET = '\033[0m'
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    RESET = "\033[0m"
 
-def log(msg, success=True):
-    color = Color.GREEN if success else Color.RED
+
+def cprint(msg: str, color: str = Color.RESET) -> None:
     print(f"{color}{msg}{Color.RESET}")
 
-def section(name):
-    print(f"\n{Color.YELLOW}=== {name} ==={Color.RESET}")
+
+@dataclass
+class CheckResult:
+    name: str
+    method: str
+    endpoint: str
+    status: int
+    ok: bool
+    layer: str
+    detail: str = ""
+
+
+@dataclass
+class SmokeReport:
+    env: str
+    mode: str
+    base_url: str
+    checks: list[CheckResult] = field(default_factory=list)
+
+    def add(self, result: CheckResult) -> None:
+        self.checks.append(result)
+
+    @property
+    def passed(self) -> bool:
+        return all(item.ok for item in self.checks)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "env": self.env,
+            "mode": self.mode,
+            "base_url": self.base_url,
+            "passed": self.passed,
+            "checks": [item.__dict__ for item in self.checks],
+        }
+
 
 class SmokeTester:
-    def __init__(self, base_url):
-        self.base_url = base_url.rstrip('/')
+    def __init__(self, env: str, mode: str, base_url: str, email: str, password: str):
+        self.env = env
+        self.mode = mode
+        self.base_url = base_url.rstrip("/")
+        self.email = email
+        self.password = password
         self.session = requests.Session()
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "User-Agent": "SmokeTester/1.0"
-        })
+        self.session.headers.update(
+            {
+                "Content-Type": "application/json",
+                "User-Agent": "B2B-SmokeTester/2.0",
+            }
+        )
+        self.report = SmokeReport(env=env, mode=mode, base_url=self.base_url)
 
-    def fail(self, msg):
-        log(f"FAILED: {msg}", False)
-        sys.exit(1)
+    def _record(
+        self,
+        *,
+        name: str,
+        method: str,
+        endpoint: str,
+        status: int,
+        ok: bool,
+        layer: str,
+        detail: str = "",
+    ) -> None:
+        self.report.add(
+            CheckResult(
+                name=name,
+                method=method,
+                endpoint=endpoint,
+                status=status,
+                ok=ok,
+                layer=layer,
+                detail=detail,
+            )
+        )
+        icon = "✅" if ok else "❌"
+        color = Color.GREEN if ok else Color.RED
+        detail_suffix = f" | {detail}" if detail else ""
+        cprint(f"{icon} {method} {endpoint} -> {status} [{layer}]{detail_suffix}", color)
 
-    def check_json_response(self, response, context=""):
-        """Verifies response is strictly JSON and not HTML."""
+    def _assert_json(self, response: requests.Response, context: str) -> dict[str, Any]:
+        text = (response.text or "").strip()
         content_type = response.headers.get("Content-Type", "")
-        
-        # 1. Check Content-Type header
-        if "application/json" not in content_type:
-            log(f"⚠️ [Warning] {context}: Content-Type is '{content_type}', expected 'application/json'. Proceeding to check body...", False)
-
-        # 2. Check Body Text for HTML signatures
-        text = response.text.strip()
         if text.lower().startswith("<!doctype") or text.lower().startswith("<html"):
-            self.fail(f"{context}: Received HTML content! This usually means 404/500 from Vercel/Next.js/Nginx instead of Backend API JSON.")
-        
-        # 3. Try parsing JSON
+            self._record(
+                name=context,
+                method=response.request.method,
+                endpoint=response.request.path_url,
+                status=response.status_code,
+                ok=False,
+                layer="proxy",
+                detail="收到 HTML，疑似 rewrite/fallback 問題",
+            )
+            raise RuntimeError(f"{context}: HTML response detected")
+
+        if "application/json" not in content_type:
+            cprint(
+                f"⚠️ {context}: Content-Type={content_type}，繼續嘗試 JSON parse",
+                Color.YELLOW,
+            )
+
         try:
             return response.json()
-        except json.JSONDecodeError:
-            self.fail(f"{context}: Invalid JSON body. Content preview: {text[:200]}")
+        except json.JSONDecodeError as exc:
+            self._record(
+                name=context,
+                method=response.request.method,
+                endpoint=response.request.path_url,
+                status=response.status_code,
+                ok=False,
+                layer="backend",
+                detail=f"JSON parse failed: {exc}",
+            )
+            raise RuntimeError(f"{context}: invalid JSON") from exc
 
-    def login(self):
-        section("1. Login")
-        # 1. CSRF (Best effort)
-        try:
-            csrf_res = self.session.get(f"{self.base_url}/auth/csrf")
-            if csrf_res.status_code == 200:
-                csrf_token = csrf_res.json().get("csrf_token")
-                if csrf_token:
-                    self.session.headers.update({"X-CSRF-Token": csrf_token})
-                    log("CSRF Token obtained.")
-        except Exception as e:
-            log(f"CSRF fetch failed (non-fatal): {e}", False)
+    def ensure_csrf(self) -> None:
+        endpoint = "/auth/csrf"
+        url = f"{self.base_url}{endpoint}"
+        response = self.session.get(url)
 
-        # 2. Login
-        url = f"{self.base_url}/auth/login"
-        payload = {"email": EMAIL, "password": PASSWORD, "remember_me": False}
-        
-        res = self.session.post(url, json=payload)
-        
-        if res.status_code != 200:
-            self.fail(f"Login failed: {res.status_code} {res.text}")
-            
-        data = self.check_json_response(res, "Login")
-        log("✅ Login successful")
-        
-        # Extract Cookie CSRF if available (Django/FastAPI style often sets check cookie)
-        csrf_cookie = self.session.cookies.get("csrf_token")
-        if csrf_cookie:
-             self.session.headers.update({"X-CSRF-Token": csrf_cookie})
+        if response.status_code != 200:
+            self._record(
+                name="csrf",
+                method="GET",
+                endpoint=endpoint,
+                status=response.status_code,
+                ok=False,
+                layer="auth",
+                detail="無法取得 CSRF token",
+            )
+            raise RuntimeError("CSRF fetch failed")
 
-    def check_auth_me(self):
-        section("2. Auth Me (Session Check)")
-        url = f"{self.base_url}/auth/me"
-        res = self.session.get(url)
-        
-        if res.status_code != 200:
-            self.fail(f"Auth Me failed: {res.status_code}")
-            
-        data = self.check_json_response(res, "Auth Me")
-        log(f"✅ Auth Me successful. User: {data.get('email')}")
+        payload = self._assert_json(response, "csrf")
+        token = payload.get("csrf_token")
+        if token:
+            self.session.headers.update({"X-CSRF-Token": token})
 
-    def check_customers(self):
-        section("3. Customers Endpoint")
-        # Ensure no accidental HTML response for query params
-        url = f"{self.base_url}/customers?skip=0&limit=5"
-        res = self.session.get(url)
-        
-        if res.status_code != 200:
-             self.fail(f"Customers list failed: {res.status_code}")
-             
-        data = self.check_json_response(res, "Customers List")
-        
-        if isinstance(data, list):
-             count = len(data)
-             log(f"✅ Customers Endpoint returned list of {count} items.")
-        elif isinstance(data, dict) and 'items' in data:
-             count = len(data['items'])
-             log(f"✅ Customers Endpoint returned paginated object with {count} items.")
+        self._record(
+            name="csrf",
+            method="GET",
+            endpoint=endpoint,
+            status=response.status_code,
+            ok=bool(token),
+            layer="auth",
+            detail="CSRF token ready" if token else "回應缺少 csrf_token",
+        )
+
+        if not token:
+            raise RuntimeError("CSRF token missing")
+
+    def login(self) -> None:
+        endpoint = "/auth/login"
+        url = f"{self.base_url}{endpoint}"
+        payload = {
+            "email": self.email,
+            "password": self.password,
+            "remember_me": False,
+        }
+        response = self.session.post(url, json=payload)
+
+        if response.status_code != 200:
+            self._record(
+                name="login",
+                method="POST",
+                endpoint=endpoint,
+                status=response.status_code,
+                ok=False,
+                layer="auth",
+                detail=response.text[:160],
+            )
+            raise RuntimeError("Login failed")
+
+        self._assert_json(response, "login")
+        self._record(
+            name="login",
+            method="POST",
+            endpoint=endpoint,
+            status=response.status_code,
+            ok=True,
+            layer="auth",
+        )
+
+    def check_auth_me(self) -> None:
+        endpoint = "/auth/me"
+        response = self.session.get(f"{self.base_url}{endpoint}")
+        ok = response.status_code == 200
+        detail = ""
+        if ok:
+            payload = self._assert_json(response, "auth_me")
+            detail = payload.get("email", "")
         else:
-             log(f"⚠️ Customers response structure unexpected: {type(data)}", False)
+            detail = response.text[:160]
+        self._record(
+            name="auth_me",
+            method="GET",
+            endpoint=endpoint,
+            status=response.status_code,
+            ok=ok,
+            layer="auth",
+            detail=detail,
+        )
+        if not ok:
+            raise RuntimeError("Auth me failed")
 
-    def check_rfqs(self):
-        section("4. RFQs Endpoint")
-        # Test specific regression: "rfqs//?" double slash issue check
-        # We will test normal first, then potentially problematic ones if needed, but clean fetch is goal.
-        
-        url = f"{self.base_url}/rfqs/?skip=0&limit=5" 
-        # Note: Backend often requires trailing slash or strict strictness.
-        
-        res = self.session.get(url)
-        
-        # If 307 Redirect, requests follows by default, but verify we don't end up at an HTML page
-        if res.history:
-            log(f"ℹ️ Request was redirected (usually slash related): {[r.status_code for r in res.history]}")
-
-        if res.status_code != 200:
-             self.fail(f"RFQs list failed: {res.status_code}")
-
-        data = self.check_json_response(res, "RFQs List")
-        
-        # Verify structure
-        if 'items' in data: # Pagination
-             log(f"✅ RFQs Endpoint returned {len(data['items'])} items.")
-        elif isinstance(data, list):
-             log(f"✅ RFQs Endpoint returned list of {len(data)} items.")
+    def check_customers(self) -> None:
+        endpoint = "/customers?page=1&page_size=5"
+        response = self.session.get(f"{self.base_url}{endpoint}")
+        ok = response.status_code == 200
+        detail = ""
+        if ok:
+            payload = self._assert_json(response, "customers")
+            if isinstance(payload, dict) and "items" in payload:
+                detail = f"items={len(payload['items'])}"
+            else:
+                detail = "格式非預期"
         else:
-             log(f"⚠️ RFQs structure unexpected: {type(data)}", False)
+            detail = response.text[:160]
+        self._record(
+            name="customers",
+            method="GET",
+            endpoint=endpoint,
+            status=response.status_code,
+            ok=ok,
+            layer="business",
+            detail=detail,
+        )
+        if not ok:
+            raise RuntimeError("Customers failed")
 
-    def run(self):
-        log(f"🚀 Starting Smoke Test on {self.base_url}...")
-        try:
-            self.login()
-            self.check_auth_me()
-            self.check_customers()
-            self.check_rfqs()
-            section("SUMMARY")
-            log("🎉 All Smoke Tests Passed!")
-        except Exception as e:
-            self.fail(f"Unexpected Exception: {e}")
+    def check_rfqs(self) -> None:
+        endpoint = "/rfqs?page=1&page_size=5"
+        response = self.session.get(f"{self.base_url}{endpoint}")
+        ok = response.status_code == 200
+        detail = ""
+        if response.history:
+            detail = f"redirects={[r.status_code for r in response.history]}"
+        if ok:
+            payload = self._assert_json(response, "rfqs")
+            if isinstance(payload, dict) and "items" in payload:
+                detail = f"{detail} items={len(payload['items'])}".strip()
+        else:
+            detail = response.text[:160]
+        self._record(
+            name="rfqs",
+            method="GET",
+            endpoint=endpoint,
+            status=response.status_code,
+            ok=ok,
+            layer="business",
+            detail=detail,
+        )
+        if not ok:
+            raise RuntimeError("RFQs failed")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="API Smoke Tester")
-    parser.add_argument("--env", type=str, required=True, choices=["dev", "prod"], help="Environment to test")
+    def run(self) -> SmokeReport:
+        cprint(
+            f"\n=== Smoke Test env={self.env} mode={self.mode} base={self.base_url} ===",
+            Color.CYAN,
+        )
+        self.ensure_csrf()
+        self.login()
+        self.check_auth_me()
+        self.check_customers()
+        self.check_rfqs()
+        return self.report
+
+
+def resolve_base_url(env: str, mode: str, override_url: str | None) -> str:
+    if override_url:
+        return override_url
+    return BASE_URLS[env][mode]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="B2B API smoke test")
+    parser.add_argument("--env", required=True, choices=["dev", "prod"])
+    parser.add_argument("--mode", default="direct", choices=["direct", "proxy"])
+    parser.add_argument("--base-url", default=None, help="Override resolved base URL")
+    parser.add_argument("--email", default=os.getenv("SMOKE_EMAIL", DEFAULT_EMAIL))
+    parser.add_argument("--password", default=os.getenv("SMOKE_PASSWORD", DEFAULT_PASSWORD))
+    parser.add_argument("--json", action="store_true", help="Output final report as JSON")
     args = parser.parse_args()
 
-    if args.env == "dev":
-        BASE_URL = "http://localhost:8000/api/v1"
-    else:
-        # Use direct backend to avoid Vercel redirect issues during smoke test
-        BASE_URL = "https://b2b-quotation-system-backend-production.up.railway.app/api/v1"
+    base_url = resolve_base_url(args.env, args.mode, args.base_url)
+    tester = SmokeTester(
+        env=args.env,
+        mode=args.mode,
+        base_url=base_url,
+        email=args.email,
+        password=args.password,
+    )
 
-    tester = SmokeTester(BASE_URL)
-    tester.run()
+    try:
+        report = tester.run()
+    except Exception as exc:  # noqa: BLE001
+        cprint(f"\nSmoke test failed: {exc}", Color.RED)
+        report = tester.report
+        if args.json:
+            print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))
+        return 1
+
+    if args.json:
+        print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))
+
+    cprint("\nSmoke test passed.", Color.GREEN)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
