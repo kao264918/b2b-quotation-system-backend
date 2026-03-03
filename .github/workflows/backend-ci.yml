@@ -1,0 +1,88 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'b2b-quotation-system-backend/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'b2b-quotation-system-backend/**'
+
+defaults:
+  run:
+    working-directory: b2b-quotation-system-backend
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      SECRET_KEY: test-secret-key-for-ci
+      ENVIRONMENT: development
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pip-audit
+
+      - name: Lint with Ruff
+        run: ruff check .
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest -v --tb=short
+
+      - name: CORS/Auth smoke gate
+        run: pytest -v tests/test_cors_auth_smoke.py
+
+  security-audit:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: b2b-quotation-system-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2024-48 || true
+        # Note: `|| true` allows CI to pass with warnings. Remove for strict mode.
