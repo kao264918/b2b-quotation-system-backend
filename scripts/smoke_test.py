@@ -58,7 +58,7 @@ class SmokeReport:
 
     @property
     def passed(self) -> bool:
-        return all(item.ok for item in self.checks)
+        return len(self.checks) > 0 and all(item.ok for item in self.checks)
 
     def to_json(self) -> dict[str, Any]:
         return {
