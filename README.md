@@ -24,6 +24,18 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+### Backend CI Gate（一鍵驗證）
+```bash
+cd b2b-quotation-system-backend
+export DATABASE_URL="postgresql://<user>:<pass>@<host>:<port>/<db>"
+./scripts/ci_gate_backend.sh
+```
+
+腳本會依序執行：
+1. `alembic upgrade head`
+2. `pytest -q`
+3. 啟動 `uvicorn`，執行 `scripts/verify_system_integrity.py`
+
 ### API Documentation
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc

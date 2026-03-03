@@ -1,12 +1,16 @@
-from sqlalchemy.orm import Session
-from datetime import datetime, date
+from datetime import date, datetime, timezone
 from decimal import Decimal
-import uuid
-from typing import Optional, List, Any
+from typing import Any, List, Literal, Optional
+
+from sqlalchemy import asc, case, desc, func
+from sqlalchemy.orm import Session
+
 from app.crud.base import CRUDBase
+from app.models.catalog import CatalogItem
 from app.models.quote import Quote, QuoteItem
 from app.models.audit_log import AuditLog
 from app.schemas.quote import QuoteCreate, QuoteUpdate
+from app.services.quote_costs import identify_missing_cost_item_ids, recalculate_quote_cost_fields
 
 # Valid status transitions
 VALID_TRANSITIONS = {
@@ -26,7 +30,27 @@ AUDIT_CATEGORIES = {
     "revert": "重啟報價",
 }
 
+
+class QuoteValidationError(ValueError):
+    def __init__(self, code: str, message: str, extra: Optional[dict] = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.extra = extra or {}
+
+    def to_detail(self) -> dict:
+        return {"code": self.code, "message": self.message, **self.extra}
+
+
 class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
+    SORTABLE_FIELDS = {
+        "created_at": Quote.created_at,
+        "subtotal": Quote.subtotal,
+        "total_cost": Quote.total_cost,
+        "gross_profit_amount": Quote.gross_profit_amount,
+        "gross_profit_rate": Quote.gross_profit_rate,
+    }
+
     def create(self, db: Session, *, obj_in: QuoteCreate) -> Quote:
         obj_data = obj_in.model_dump()
         items_data = obj_data.pop("items", [])
@@ -66,8 +90,12 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         db.flush()
         
         for item in items_data:
-            db_item = QuoteItem(**item, quote_id=db_obj.id)
+            db_item = QuoteItem(**self._prepare_item_data(db, item), quote_id=db_obj.id)
             db.add(db_item)
+
+        db.flush()
+        db.refresh(db_obj)
+        recalculate_quote_cost_fields(db_obj)
         
         # Create audit log
         self._create_audit_log(db, db_obj.id, "create", AUDIT_CATEGORIES["create"], {"version": 1})
@@ -77,9 +105,28 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         return db_obj
 
     def get_multi(
-        self, db: Session, *, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        sort_by: Optional[str] = None,
+        sort_order: Literal["asc", "desc"] = "desc",
     ) -> List[Quote]:
-        return db.query(self.model).order_by(self.model.created_at.desc()).offset(skip).limit(limit).all()
+        query = db.query(self.model)
+        sort_key = sort_by if sort_by in self.SORTABLE_FIELDS else "created_at"
+        sort_column = self.SORTABLE_FIELDS[sort_key]
+        order_fn = asc if sort_order == "asc" else desc
+
+        if sort_key in {"total_cost", "gross_profit_amount", "gross_profit_rate"}:
+            query = query.order_by(
+                case((Quote.cost_status == "missing", 1), else_=0).asc(),
+                order_fn(sort_column),
+            )
+        else:
+            query = query.order_by(order_fn(sort_column))
+
+        return query.offset(skip).limit(limit).all()
     
     def update_status(self, db: Session, *, quote: Quote, new_status: str) -> Quote:
         """Update quotation status with transition validation."""
@@ -94,6 +141,16 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         # Set accounting_status to unpaid when transitioning to confirmed
         if new_status == "confirmed" and quote.accounting_status is None:
             quote.accounting_status = "unpaid"
+        if new_status == "confirmed":
+            recalculate_quote_cost_fields(quote)
+            missing_item_ids = identify_missing_cost_item_ids(quote.items)
+            if missing_item_ids:
+                raise QuoteValidationError(
+                    "QUOTATION_COST_INCOMPLETE",
+                    "Quotation contains items without cost snapshot.",
+                    {"missing_item_ids": missing_item_ids},
+                )
+            quote.confirmed_at = datetime.now(timezone.utc)
         
         # Create audit log
         self._create_audit_log(db, quote.id, "status_change", AUDIT_CATEGORIES["status_change"], {
@@ -140,6 +197,8 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         quote.version = old_version + 1
         quote.status = "draft"
         quote.accounting_status = None  # Draft quotes have no accounting status
+        quote.confirmed_at = None
+        recalculate_quote_cost_fields(quote)
         
         # Create audit log
         self._create_audit_log(db, quote.id, "revert", AUDIT_CATEGORIES["revert"], {
@@ -180,7 +239,7 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             
             # Create new items
             for item_data in items_data:
-                db_item = QuoteItem(**item_data, quote_id=quote.id)
+                db_item = QuoteItem(**self._prepare_item_data(db, item_data), quote_id=quote.id)
                 db.add(db_item)
             
             changes["items"] = "updated"
@@ -192,10 +251,45 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             category = "update_tax" if "tax_total" in changes else "update_items"
             self._create_audit_log(db, quote.id, category, AUDIT_CATEGORIES.get(category, "更新"), changes)
         
+        db.flush()
+        db.refresh(quote)
+        recalculate_quote_cost_fields(quote)
+        
         db.add(quote)
         db.commit()
         db.refresh(quote)
         return quote
+
+    def get_internal_kpi(self, db: Session, *, range_type: Literal["month", "quarter", "all"]) -> dict:
+        now = datetime.now(timezone.utc)
+        start_at: Optional[datetime] = None
+        if range_type == "month":
+            start_at = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        elif range_type == "quarter":
+            quarter_start_month = ((now.month - 1) // 3) * 3 + 1
+            start_at = datetime(now.year, quarter_start_month, 1, tzinfo=timezone.utc)
+
+        query = db.query(Quote).filter(Quote.status == "confirmed")
+        if start_at is not None:
+            query = query.filter(Quote.confirmed_at >= start_at, Quote.confirmed_at <= now)
+
+        total_revenue = query.with_entities(func.coalesce(func.sum(Quote.subtotal), 0)).scalar() or Decimal("0")
+        total_cost = query.with_entities(func.coalesce(func.sum(Quote.total_cost), 0)).scalar() or Decimal("0")
+        avg_gp_rate = (
+            query.filter(Quote.cost_status == "ok")
+            .with_entities(func.coalesce(func.avg(Quote.gross_profit_rate), 0))
+            .scalar()
+            or Decimal("0")
+        )
+        count = query.count()
+
+        return {
+            "range": range_type,
+            "count": count,
+            "total_revenue_excl_tax": Decimal(total_revenue),
+            "total_cost": Decimal(total_cost),
+            "average_gross_profit_rate": Decimal(avg_gp_rate),
+        }
     
     def get_audit_logs(self, db: Session, quote_id: str) -> List[AuditLog]:
         """Get all audit logs for a quote."""
@@ -229,5 +323,26 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             return data.isoformat()
         return data
 
-quote = CRUDQuote(Quote)
+    def _prepare_item_data(self, db: Session, item_data: dict) -> dict:
+        data = {**item_data}
+        catalog_item_id = data.get("catalog_item_id")
+        if not catalog_item_id:
+            raise QuoteValidationError(
+                "QUOTE_CUSTOM_ITEM_FORBIDDEN",
+                "Quote items must be selected from catalog.",
+            )
 
+        catalog_item = (
+            db.query(CatalogItem)
+            .filter(CatalogItem.id == catalog_item_id, CatalogItem.deleted_at.is_(None))
+            .first()
+        )
+        if not catalog_item:
+            raise QuoteValidationError("CATALOG_ITEM_NOT_FOUND", "Catalog item not found.")
+        if catalog_item.reference_cost is None:
+            raise QuoteValidationError("CATALOG_COST_MISSING", "Catalog item cost is missing.")
+
+        data["snapshot_cost"] = Decimal(catalog_item.reference_cost)
+        return data
+
+quote = CRUDQuote(Quote)
