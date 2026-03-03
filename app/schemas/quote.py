@@ -44,6 +44,7 @@ class QuoteItem(QuoteItemBase):
     quote_id: str
     rfq_item_id: Optional[str] = None
     catalog_item_id: Optional[str] = None
+    snapshot_cost: Optional[Decimal] = None
     source_rfq_info: Optional[dict] = None
     
     model_config = ConfigDict(from_attributes=True)
@@ -102,12 +103,25 @@ class Quote(QuoteBase):
     quote_number: str
     accounting_status: Optional[str] = None
     version: int = 1
+    cost_status: str = "ok"
+    total_cost: Optional[Decimal] = None
+    gross_profit_amount: Optional[Decimal] = None
+    gross_profit_rate: Optional[Decimal] = None
     created_at: datetime
     updated_at: datetime
     sent_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
     items: List[QuoteItem] = []
     
     # Relationships
     customer: Optional["Customer"] = None
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class QuoteInternalKPI(BaseModel):
+    range: Literal["month", "quarter", "all"]
+    count: int
+    total_revenue_excl_tax: Decimal
+    total_cost: Decimal
+    average_gross_profit_rate: Decimal
