@@ -29,9 +29,6 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: b2b-quotation-system-backend
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +59,13 @@ jobs:
 
       - name: Run smoke test (${{ matrix.mode }})
         run: |
-          python scripts/smoke_test.py \
+          if [ -f "scripts/smoke_test.py" ]; then
+            SMOKE_SCRIPT="scripts/smoke_test.py"
+          else
+            SMOKE_SCRIPT="b2b-quotation-system-backend/scripts/smoke_test.py"
+          fi
+
+          python "${SMOKE_SCRIPT}" \
             --env "${TARGET_ENV}" \
             --mode "${{ matrix.mode }}" \
             --email "${SMOKE_EMAIL}" \
