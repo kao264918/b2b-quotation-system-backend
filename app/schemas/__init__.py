@@ -27,3 +27,4 @@ from .quote import (
     QuoteInternalKPI,
 )
 from .invoice import Invoice, InvoiceCreate, InvoiceUpdate, InvoiceItem, InvoiceItemCreate, InvoiceStatusUpdate, InvoiceAccountingStatusUpdate, InvoiceFromQuoteRequest, InvoiceCustomer
+from .dashboard import DashboardTrendPoint, DashboardTrendResponse
