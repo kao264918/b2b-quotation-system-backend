@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import SessionLocal
 from app.deps.auth import get_current_user, require_superuser
-from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units
+from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units, dashboard
 from app.routers.internal import vendor_quotes
 from app.core.request_id import RequestIdMiddleware, get_request_id
 from app.core.request_logging import RequestLoggingMiddleware
@@ -230,6 +230,12 @@ app.include_router(
     invoices.router,
     prefix=f"{settings.API_V1_STR}/invoices",
     tags=["invoices"],
+    dependencies=[Depends(get_current_user)],
+)
+app.include_router(
+    dashboard.router,
+    prefix=f"{settings.API_V1_STR}/dashboard",
+    tags=["dashboard"],
     dependencies=[Depends(get_current_user)],
 )
 
