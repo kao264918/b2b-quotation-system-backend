@@ -329,7 +329,7 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         if not catalog_item_id:
             raise QuoteValidationError(
                 "QUOTE_CUSTOM_ITEM_FORBIDDEN",
-                "Quote items must be selected from catalog.",
+                "品項需先於品項管理建立後再加入報價。",
             )
 
         catalog_item = (
