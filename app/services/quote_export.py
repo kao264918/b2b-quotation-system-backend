@@ -143,16 +143,16 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
     if quote.customer:
         safe_write('J6', quote.customer.company_name)
         safe_write('J7', quote.customer.tax_id or "")
-        # Quote model doesn't explicitly have contact phone/name on Customer relation easily accessible 
-        # unless we fetch it. Assuming simple props for now.
-        # safe_write('J8', quote.customer.phone or "")
-        # safe_write('J9', quote.customer.contact_person or "")
+        safe_write('J8', quote.customer.contact_phone or "")
+        safe_write('J9', quote.customer.contact_name or "")
         
     # L1: Quote No
     safe_write('L1', quote.quote_number)
     
     # I2: Title / Project Name
     safe_write('I2', quote.title)
+    # J10: Template header field "項目名稱" should mirror quote title
+    safe_write('J10', quote.title)
 
     # 2. Overwrite Table Headers (Row 16)
     # The template might have generic headers. We enforce ours.
