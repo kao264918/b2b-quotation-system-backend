@@ -28,6 +28,33 @@ def _build_quote(items=None):
     )
 
 
+def _build_items(count: int):
+    return [
+        SimpleNamespace(
+            name=f"項目{index}",
+            description=f"說明{index}",
+            quantity=1,
+            unit="式",
+            unit_price=1000,
+            subtotal=1000,
+        )
+        for index in range(1, count + 1)
+    ]
+
+
+def _font_color_repr(cell):
+    color = cell.font.color
+    if color is None:
+        return None
+    if color.type == "rgb":
+        return color.rgb
+    if color.type == "theme":
+        return f"theme:{color.theme}"
+    if color.type == "indexed":
+        return f"indexed:{color.indexed}"
+    return color.value
+
+
 def test_quote_excel_header_uses_customer_primary_contact_and_title():
     quote = _build_quote()
 
@@ -67,3 +94,47 @@ def test_quote_excel_still_clears_item_table_template_rows():
     assert worksheet["F17"].value is None
     assert worksheet["J17"].value is None
     assert worksheet["G18"].value is None
+
+
+def test_quote_excel_expands_rows_and_preserves_footer_for_large_item_count():
+    quote = _build_quote(items=_build_items(18))
+
+    excel_bytes = generate_quote_excel(quote)
+    workbook = load_workbook(BytesIO(excel_bytes))
+    worksheet = workbook.active
+
+    assert worksheet["G49"].value == "項目17"
+    assert worksheet["G51"].value == "項目18"
+    assert worksheet["K53"].value == "小計:"
+    assert worksheet["L53"].value == "NT$ 1,000"
+    assert str(worksheet["D60"].value).strip() == "備  註"
+    assert worksheet["B64"].value == "客 戶 回 簽"
+    assert worksheet["F69"].value == "匯款銀行"
+
+
+def test_quote_excel_normalizes_item_font_color_for_late_rows():
+    quote = _build_quote(items=_build_items(18))
+
+    excel_bytes = generate_quote_excel(quote)
+    workbook = load_workbook(BytesIO(excel_bytes))
+    worksheet = workbook.active
+
+    assert _font_color_repr(worksheet["G45"]) != "FFFF0000"
+    assert _font_color_repr(worksheet["G47"]) != "FFFF0000"
+    assert _font_color_repr(worksheet["G49"]) != "FFFF0000"
+    assert _font_color_repr(worksheet["G51"]) != "FFFF0000"
+
+
+def test_quote_excel_updates_print_settings_for_multi_page_output():
+    quote = _build_quote(items=_build_items(18))
+
+    excel_bytes = generate_quote_excel(quote)
+    workbook = load_workbook(BytesIO(excel_bytes))
+    worksheet = workbook.active
+
+    print_area = str(worksheet.print_area)
+    assert print_area.startswith("'0310 測試客戶股份有限公司 v3'!$B$1:$M$")
+    assert int(print_area.rsplit("$", 1)[-1]) > 76
+    assert worksheet.print_title_rows == "$16:$16"
+    assert worksheet.page_setup.fitToWidth == 1
+    assert worksheet.page_setup.fitToHeight == 0
