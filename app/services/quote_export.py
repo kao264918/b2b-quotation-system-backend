@@ -182,8 +182,8 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
                  return merged_range.max_row - merged_range.min_row + 1
         return 1
 
-    # Clear existing rows (17-60)
-    for r in range(17, 60):
+    # Clear only the item-table area to avoid erasing template footer notes/signature/bank info.
+    for r in range(17, 49):
         for c in range(1, 15):
              safe_write(r, c, None)
              
