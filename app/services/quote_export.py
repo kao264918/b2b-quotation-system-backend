@@ -6,11 +6,107 @@ import io
 import os
 import subprocess
 import tempfile
+from copy import copy
 from typing import Optional
 
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
 from app.models.quote import Quote
+
+ITEM_START_ROW = 17
+ITEM_END_ROW = 48
+ITEM_BLOCK_HEIGHT = 2
+BASE_ITEM_CAPACITY = (ITEM_END_ROW - ITEM_START_ROW + 1) // ITEM_BLOCK_HEIGHT
+BASE_TOTAL_ROW = 49
+ITEM_CLEAR_MAX_COL = 14
+PROTOTYPE_ITEM_TOP_ROW = 17
+
+
+def _copy_row_style(ws, source_row: int, target_row: int, max_col: int = ITEM_CLEAR_MAX_COL) -> None:
+    for col in range(1, max_col + 1):
+        source_cell = ws.cell(row=source_row, column=col)
+        target_cell = ws.cell(row=target_row, column=col)
+        target_cell._style = copy(source_cell._style)
+        if source_cell.has_style:
+            target_cell.font = copy(source_cell.font)
+            target_cell.fill = copy(source_cell.fill)
+            target_cell.border = copy(source_cell.border)
+            target_cell.alignment = copy(source_cell.alignment)
+            target_cell.protection = copy(source_cell.protection)
+            target_cell.number_format = source_cell.number_format
+        target_cell.value = None
+
+    ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
+
+
+def _extract_and_unmerge_ranges(ws, start_row: int):
+    ranges_to_shift = [rng for rng in list(ws.merged_cells.ranges) if rng.min_row >= start_row]
+    shifted_specs = [
+        (rng.min_row, rng.min_col, rng.max_row, rng.max_col)
+        for rng in ranges_to_shift
+    ]
+    for rng in ranges_to_shift:
+        ws.unmerge_cells(str(rng))
+    return shifted_specs
+
+
+def _reapply_shifted_merged_ranges(ws, merge_specs, row_offset: int) -> None:
+    for min_row, min_col, max_row, max_col in merge_specs:
+        ws.merge_cells(
+            start_row=min_row + row_offset,
+            start_column=min_col,
+            end_row=max_row + row_offset,
+            end_column=max_col,
+        )
+
+
+def _ensure_item_block_merges(ws, top_row: int) -> None:
+    merge_specs = [
+        (top_row, 5, top_row + 1, 5),
+        (top_row, 6, top_row + 1, 6),
+        (top_row, 7, top_row, 9),
+        (top_row + 1, 7, top_row + 1, 9),
+        (top_row, 10, top_row + 1, 10),
+        (top_row, 11, top_row + 1, 11),
+        (top_row, 12, top_row + 1, 12),
+    ]
+
+    existing_ranges = {str(rng) for rng in ws.merged_cells.ranges}
+    for start_row, start_col, end_row, end_col in merge_specs:
+        coord = f"{ws.cell(start_row, start_col).coordinate}:{ws.cell(end_row, end_col).coordinate}"
+        if coord not in existing_ranges:
+            ws.merge_cells(start_row=start_row, start_column=start_col, end_row=end_row, end_column=end_col)
+
+
+def _normalize_item_block_display_styles(ws, top_row: int) -> None:
+    display_style_map = {
+        (top_row, 5): (PROTOTYPE_ITEM_TOP_ROW, 5),
+        (top_row, 6): (PROTOTYPE_ITEM_TOP_ROW, 6),
+        (top_row, 7): (PROTOTYPE_ITEM_TOP_ROW, 7),
+        (top_row, 10): (PROTOTYPE_ITEM_TOP_ROW, 10),
+        (top_row, 11): (PROTOTYPE_ITEM_TOP_ROW, 11),
+        (top_row, 12): (PROTOTYPE_ITEM_TOP_ROW, 12),
+        (top_row + 1, 7): (PROTOTYPE_ITEM_TOP_ROW + 1, 7),
+    }
+
+    for (target_row, target_col), (source_row, source_col) in display_style_map.items():
+        source_cell = ws.cell(row=source_row, column=source_col)
+        target_cell = ws.cell(row=target_row, column=target_col)
+        target_cell._style = copy(source_cell._style)
+        target_cell.font = copy(source_cell.font)
+        target_cell.fill = copy(source_cell.fill)
+        target_cell.border = copy(source_cell.border)
+        target_cell.alignment = copy(source_cell.alignment)
+        target_cell.protection = copy(source_cell.protection)
+        target_cell.number_format = source_cell.number_format
+
+
+def _find_last_used_row(ws) -> int:
+    for row in range(ws.max_row, 0, -1):
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=row, column=col).value not in (None, ""):
+                return row
+    return 1
 
 
 def generate_quote_pdf(quote: Quote, version: Optional[int] = None) -> bytes:
@@ -171,111 +267,64 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
     safe_write(16, 12, "金額")
     
     # 3. Items Logic
-    start_row = 17
-    current_row = start_row
-    
-    # Helper for row spans
-    def get_row_span(row_idx):
-        cell_coord = f"E{row_idx}"
-        for merged_range in ws.merged_cells.ranges:
-             if cell_coord in merged_range and merged_range.min_row == row_idx:
-                 return merged_range.max_row - merged_range.min_row + 1
-        return 1
+    required_blocks = len(quote.items)
+    visible_block_count = max(BASE_ITEM_CAPACITY, required_blocks)
+    extra_blocks = max(0, required_blocks - BASE_ITEM_CAPACITY)
+    extra_rows = extra_blocks * ITEM_BLOCK_HEIGHT
 
-    # Clear only the item-table area to avoid erasing template footer notes/signature/bank info.
-    for r in range(17, 49):
-        for c in range(1, 15):
-             safe_write(r, c, None)
-             
-    # Helper to create/check vertical merge
-    def ensure_vertical_merge(col_idx, start_r, span_len):
-        if span_len < 2: return
-        end_r = start_r + span_len - 1
-        cell = ws.cell(row=start_r, column=col_idx)
-        if isinstance(cell, openpyxl.cell.cell.MergedCell):
-            return
-        
-        is_merge_start = False
-        for rng in ws.merged_cells.ranges:
-            if rng.min_row == start_r and rng.min_col == col_idx and rng.max_row >= end_r:
-                is_merge_start = True
-                break
-        
-        if not is_merge_start:
-            try:
-                ws.merge_cells(start_row=start_r, start_column=col_idx, end_row=end_r, end_column=col_idx)
-                # Apply center alignment
-                top_cell = ws.cell(row=start_r, column=col_idx)
-                top_cell.alignment = Alignment(horizontal='center', vertical='center')
-            except Exception as e:
-                print(f"Merge error at {start_r},{col_idx}: {e}")
+    if extra_rows > 0:
+        merge_specs = _extract_and_unmerge_ranges(ws, BASE_TOTAL_ROW)
+        ws.insert_rows(BASE_TOTAL_ROW, extra_rows)
+        _reapply_shifted_merged_ranges(ws, merge_specs, extra_rows)
 
-    # Write Items
-    for idx, item in enumerate(quote.items, 1):
-        span = get_row_span(current_row)
-        
-        # Col 5 (E): Index
-        safe_write(current_row, 5, str(idx))
-        if span >= 2: ensure_vertical_merge(5, current_row, span)
+        for block_index in range(extra_blocks):
+            target_top_row = ITEM_START_ROW + (BASE_ITEM_CAPACITY + block_index) * ITEM_BLOCK_HEIGHT
+            _copy_row_style(ws, PROTOTYPE_ITEM_TOP_ROW, target_top_row)
+            _copy_row_style(ws, PROTOTYPE_ITEM_TOP_ROW + 1, target_top_row + 1)
+            _ensure_item_block_merges(ws, target_top_row)
 
-        # Col 6 (F): Unit (Use unit_price's unit or item.unit)
-        safe_write(current_row, 6, item.unit)
-        if span >= 2: ensure_vertical_merge(6, current_row, span)
+    item_region_end_row = ITEM_START_ROW + visible_block_count * ITEM_BLOCK_HEIGHT - 1
+    for r in range(ITEM_START_ROW, item_region_end_row + 1):
+        for c in range(1, ITEM_CLEAR_MAX_COL + 1):
+            safe_write(r, c, None)
 
-        # Col 7 (G): Name & Description (Merged G-I)
-        # If span >= 2, we can split Name and Description into separate lines if desired.
-        # Format:
-        # Row 1: Name
-        # Row 2: Description (Spec / Dims)
-        
-        if span >= 2:
-            # Row 1: Name
-            safe_write(current_row, 7, item.name)
-            # Row 2: Description
-            if item.description:
-                safe_write(current_row + 1, 7, item.description)
-        else:
-            # Single row: Concatenate
-            full_text = item.name
-            if item.description:
-                full_text += f"\n{item.description}"
-            safe_write(current_row, 7, full_text)
+    for block_index, item in enumerate(quote.items):
+        top_row = ITEM_START_ROW + block_index * ITEM_BLOCK_HEIGHT
+        second_row = top_row + 1
+        _ensure_item_block_merges(ws, top_row)
+        _normalize_item_block_display_styles(ws, top_row)
 
-        # Col 10 (J): Quantity
-        safe_write(current_row, 10, float(item.quantity))
-        if span >= 2: ensure_vertical_merge(10, current_row, span)
-
-        # Col 11 (K): Unit Price
-        safe_write(current_row, 11, float(item.unit_price))
-        if span >= 2: ensure_vertical_merge(11, current_row, span)
-
-        # Col 12 (L): Subtotal (Amount)
-        safe_write(current_row, 12, float(item.subtotal))
-        if span >= 2: ensure_vertical_merge(12, current_row, span)
-        
-        current_row += span
+        safe_write(top_row, 5, str(block_index + 1))
+        safe_write(top_row, 6, item.unit)
+        safe_write(top_row, 7, item.name)
+        safe_write(second_row, 7, item.description or None)
+        safe_write(top_row, 10, float(item.quantity))
+        safe_write(top_row, 11, float(item.unit_price))
+        safe_write(top_row, 12, float(item.subtotal))
 
     # 4. Totals (Rows 49, 50, 51)
     # K(11): Label, L(12): Value
-    
+    subtotal_row = BASE_TOTAL_ROW + extra_rows
+    tax_row = subtotal_row + 1
+    grand_total_row = subtotal_row + 2
+
     def fmt_price(val):
         return f"NT$ {val:,.0f}"
 
-    safe_write(49, 11, "小計:")
-    safe_write(49, 12, fmt_price(quote.subtotal))
+    safe_write(subtotal_row, 11, "小計:")
+    safe_write(subtotal_row, 12, fmt_price(quote.subtotal))
     
-    safe_write(50, 11, "稅金:")
-    safe_write(50, 12, fmt_price(quote.tax_total))
+    safe_write(tax_row, 11, "稅金:")
+    safe_write(tax_row, 12, fmt_price(quote.tax_total))
     
-    safe_write(51, 11, "總計:")
-    safe_write(51, 12, fmt_price(quote.total))
-    
-    # Optional: Notes in Row 53+ if template allows?
-    # Template might have "備註" around row 42-46? 
-    # Since I don't know the exact row for notes in template, and `export_service.py` didn't write notes, 
-    # I will skip notes or try to find a safe spot.
-    # `export_service.py` loops up to 60 clearing things.
-    # If there is a note field, we can add it later.
+    safe_write(grand_total_row, 11, "總計:")
+    safe_write(grand_total_row, 12, fmt_price(quote.total))
+
+    last_used_row = _find_last_used_row(ws)
+    ws.print_area = f"$B$1:$M${last_used_row}"
+    ws.print_title_rows = "$16:$16"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
     
     buffer = io.BytesIO()
     wb.save(buffer)
