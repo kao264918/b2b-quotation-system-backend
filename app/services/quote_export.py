@@ -10,7 +10,7 @@ from copy import copy
 from typing import Optional
 
 import openpyxl
-from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.styles import Border, Side
 from app.models.quote import Quote
 
 ITEM_START_ROW = 17
@@ -20,6 +20,7 @@ BASE_ITEM_CAPACITY = (ITEM_END_ROW - ITEM_START_ROW + 1) // ITEM_BLOCK_HEIGHT
 BASE_TOTAL_ROW = 49
 ITEM_CLEAR_MAX_COL = 14
 PROTOTYPE_ITEM_TOP_ROW = 17
+UNIFIED_ITEM_BOTTOM_SIDE = Side(style="thin", color="FF000000")
 
 
 def _copy_row_style(ws, source_row: int, target_row: int, max_col: int = ITEM_CLEAR_MAX_COL) -> None:
@@ -99,6 +100,48 @@ def _normalize_item_block_display_styles(ws, top_row: int) -> None:
         target_cell.alignment = copy(source_cell.alignment)
         target_cell.protection = copy(source_cell.protection)
         target_cell.number_format = source_cell.number_format
+
+
+def _replace_cell_bottom_border(cell, bottom_side) -> None:
+    existing_border = cell.border
+    cell.border = Border(
+        left=copy(existing_border.left),
+        right=copy(existing_border.right),
+        top=copy(existing_border.top),
+        bottom=copy(bottom_side),
+        diagonal=copy(existing_border.diagonal),
+        diagonal_direction=existing_border.diagonal_direction,
+        outline=existing_border.outline,
+        vertical=copy(existing_border.vertical),
+        horizontal=copy(existing_border.horizontal),
+    )
+
+
+def _normalize_item_block_bottom_border(ws, top_row: int) -> None:
+    standard_bottom = copy(UNIFIED_ITEM_BOTTOM_SIDE)
+    no_bottom = copy(ws.cell(row=PROTOTYPE_ITEM_TOP_ROW, column=5).border.bottom)
+
+    for col in range(5, 13):
+        _replace_cell_bottom_border(ws.cell(row=top_row, column=col), no_bottom)
+        _replace_cell_bottom_border(ws.cell(row=top_row + 1, column=col), no_bottom)
+
+    # Vertically merged columns must carry the visible bottom border on the
+    # top-left cell of the merged pair, otherwise the second-row merged cell
+    # renders without the line after reloading/exporting.
+    for col in (5, 6, 10, 11, 12):
+        _replace_cell_bottom_border(ws.cell(row=top_row, column=col), standard_bottom)
+
+    # Description uses a second-row horizontal merge (G:I); apply the border on
+    # the anchor cell so the merged range renders one continuous line.
+    _replace_cell_bottom_border(ws.cell(row=top_row + 1, column=7), standard_bottom)
+
+
+def _apply_total_row_emphasis(ws, total_row: int) -> None:
+    for col in (11, 12):
+        cell = ws.cell(row=total_row, column=col)
+        emphasized_font = copy(cell.font)
+        emphasized_font.bold = True
+        cell.font = emphasized_font
 
 
 def _find_last_used_row(ws) -> int:
@@ -301,6 +344,7 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
         safe_write(top_row, 10, float(item.quantity))
         safe_write(top_row, 11, float(item.unit_price))
         safe_write(top_row, 12, float(item.subtotal))
+        _normalize_item_block_bottom_border(ws, top_row)
 
     # 4. Totals (Rows 49, 50, 51)
     # K(11): Label, L(12): Value
@@ -319,10 +363,10 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
     
     safe_write(grand_total_row, 11, "總計:")
     safe_write(grand_total_row, 12, fmt_price(quote.total))
+    _apply_total_row_emphasis(ws, grand_total_row)
 
     last_used_row = _find_last_used_row(ws)
     ws.print_area = f"$B$1:$M${last_used_row}"
-    ws.print_title_rows = "$16:$16"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     

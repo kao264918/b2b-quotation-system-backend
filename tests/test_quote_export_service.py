@@ -55,6 +55,19 @@ def _font_color_repr(cell):
     return color.value
 
 
+def _border_color_repr(cell):
+    color = cell.border.bottom.color
+    if color is None:
+        return None
+    if color.type == "rgb":
+        return color.rgb
+    if color.type == "theme":
+        return f"theme:{color.theme}"
+    if color.type == "indexed":
+        return f"indexed:{color.indexed}"
+    return color.value
+
+
 def test_quote_excel_header_uses_customer_primary_contact_and_title():
     quote = _build_quote()
 
@@ -135,6 +148,43 @@ def test_quote_excel_updates_print_settings_for_multi_page_output():
     print_area = str(worksheet.print_area)
     assert print_area.startswith("'0310 測試客戶股份有限公司 v3'!$B$1:$M$")
     assert int(print_area.rsplit("$", 1)[-1]) > 76
-    assert worksheet.print_title_rows == "$16:$16"
+    assert worksheet.print_title_rows in (None, "")
     assert worksheet.page_setup.fitToWidth == 1
     assert worksheet.page_setup.fitToHeight == 0
+
+
+def test_quote_excel_emphasizes_grand_total_only():
+    quote = _build_quote(items=_build_items(2))
+
+    excel_bytes = generate_quote_excel(quote)
+    workbook = load_workbook(BytesIO(excel_bytes))
+    worksheet = workbook.active
+
+    assert worksheet["K49"].font.bold is False
+    assert worksheet["L49"].font.bold is False
+    assert worksheet["K50"].font.bold is False
+    assert worksheet["L50"].font.bold is False
+    assert worksheet["K51"].font.bold is True
+    assert worksheet["L51"].font.bold is True
+
+
+def test_quote_excel_normalizes_item_bottom_border_for_template_and_expanded_rows():
+    quote = _build_quote(items=_build_items(18))
+
+    excel_bytes = generate_quote_excel(quote)
+    workbook = load_workbook(BytesIO(excel_bytes))
+    worksheet = workbook.active
+
+    rows_to_check = [18, 20, 48, 50, 52]
+    cols_to_check = ["E", "F", "G", "H", "I", "J", "K", "L"]
+
+    expected_style = worksheet["F18"].border.bottom.style
+    expected_color = _border_color_repr(worksheet["F18"])
+    assert expected_style == "thin"
+    assert expected_color == "FF000000"
+
+    for row in rows_to_check:
+        styles = [worksheet[f"{col}{row}"].border.bottom.style for col in cols_to_check]
+        colors = [_border_color_repr(worksheet[f"{col}{row}"]) for col in cols_to_check]
+        assert all(style == expected_style for style in styles)
+        assert all(color == expected_color for color in colors)
