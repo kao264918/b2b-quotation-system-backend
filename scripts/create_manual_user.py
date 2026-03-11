@@ -22,7 +22,7 @@ def create_manual_user(email, password):
             existing.email_verified_at = datetime.now(timezone.utc)
             db.add(existing)
             db.commit()
-            print(f"✅ User {email} updated. Password: {password}")
+            print(f"✅ User {email} updated.")
             return
 
         # Create new
@@ -38,7 +38,7 @@ def create_manual_user(email, password):
         )
         db.add(user)
         db.commit()
-        print(f"✅ User {email} created successfully. Password: {password}")
+        print(f"✅ User {email} created successfully.")
         
     except Exception as e:
         print(f"❌ Error: {e}")
