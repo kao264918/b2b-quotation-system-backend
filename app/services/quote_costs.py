@@ -1,15 +1,64 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
+import re
 from typing import Iterable
 
 
 ZERO = Decimal("0")
 TWO_DP = Decimal("0.01")
+AREA_UNIT_PATTERN = re.compile(r"=\s*([\d.]+)\s*材")
 
 
 def quantize_money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+
+
+def _parse_area_unit_from_description(item: object) -> Decimal | None:
+    description = getattr(item, "description", None)
+    if not description:
+        return None
+
+    match = AREA_UNIT_PATTERN.search(str(description))
+    if not match:
+        return None
+
+    area_unit = Decimal(match.group(1))
+    return area_unit if area_unit > ZERO else Decimal("1")
+
+
+def _uses_area_pricing(item: object) -> bool:
+    if getattr(item, "unit", None) == "材":
+        return True
+
+    rfq_item = getattr(item, "rfq_item", None)
+    if rfq_item is not None and getattr(rfq_item, "item_type", None) == "output":
+        return True
+
+    return False
+
+
+def _resolve_area_multiplier(item: object) -> Decimal:
+    if not _uses_area_pricing(item):
+        return Decimal("1")
+
+    direct_area_unit = getattr(item, "area_unit", None)
+    if direct_area_unit is not None:
+        area_unit = Decimal(direct_area_unit)
+        return area_unit if area_unit > ZERO else Decimal("1")
+
+    description_area_unit = _parse_area_unit_from_description(item)
+    if description_area_unit is not None:
+        return description_area_unit
+
+    rfq_item = getattr(item, "rfq_item", None)
+    if rfq_item is not None:
+        rfq_area_unit = getattr(rfq_item, "area_unit", None)
+        if rfq_area_unit is not None:
+            area_unit = Decimal(rfq_area_unit)
+            return area_unit if area_unit > ZERO else Decimal("1")
+
+    return Decimal("1")
 
 
 def calculate_total_cost(items: Iterable[object]) -> Decimal:
@@ -19,7 +68,8 @@ def calculate_total_cost(items: Iterable[object]) -> Decimal:
         quantity = getattr(item, "quantity", ZERO)
         if snapshot_cost is None:
             continue
-        total += Decimal(snapshot_cost) * Decimal(quantity)
+        area_multiplier = _resolve_area_multiplier(item)
+        total += Decimal(snapshot_cost) * Decimal(quantity) * area_multiplier
     return quantize_money(total)
 
 
