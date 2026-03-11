@@ -18,6 +18,7 @@
 import sys
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -26,6 +27,14 @@ sys.path.append(os.getcwd())
 
 from app.crud import user as crud_user
 from app.models.user import User
+
+
+def mask_database_target(db_url: str) -> str:
+    parsed = urlparse(db_url)
+    host = parsed.hostname or "unknown-host"
+    port = parsed.port or "default"
+    database = parsed.path.lstrip("/") or "unknown-db"
+    return f"{host}:{port}/{database}"
 
 def create_manual_user(db_url: str, email: str, password: str, full_name: str = "Manual User"):
     """
@@ -55,7 +64,6 @@ def create_manual_user(db_url: str, email: str, password: str, full_name: str = 
             db.add(existing)
             db.commit()
             print(f"✅ User {email} updated successfully!")
-            print(f"   Password: {password}")
             return
 
         # Create new
@@ -73,7 +81,6 @@ def create_manual_user(db_url: str, email: str, password: str, full_name: str = 
         db.commit()
         print(f"✅ User {email} created successfully!")
         print(f"   Email: {email}")
-        print(f"   Password: {password}")
         print(f"   Full Name: {full_name}")
         
     except Exception as e:
@@ -94,12 +101,19 @@ if __name__ == "__main__":
         print("   Set it via: DATABASE_URL='postgresql://...' python scripts/create_user_any_db.py")
         sys.exit(1)
     
-    # Get credentials from env or use defaults
-    email = os.getenv("EMAIL", "kao264918@gmail.com")
-    password = os.getenv("PASSWORD", "Test@1234")
-    full_name = os.getenv("FULL_NAME", "Kevin Kao")
-    
-    print(f"📊 Database: {db_url.split('@')[1] if '@' in db_url else 'local'}")
+    email = os.getenv("EMAIL")
+    password = os.getenv("PASSWORD")
+    full_name = os.getenv("FULL_NAME", "Example User")
+
+    if not email:
+        print("❌ Error: EMAIL environment variable is required")
+        sys.exit(1)
+
+    if not password:
+        print("❌ Error: PASSWORD environment variable is required")
+        sys.exit(1)
+
+    print(f"📊 Database: {mask_database_target(db_url)}")
     print(f"📧 Email: {email}")
     print(f"🔐 Password: {'*' * len(password)}")
     print()
