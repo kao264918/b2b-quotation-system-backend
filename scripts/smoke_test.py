@@ -8,8 +8,8 @@ from typing import Any
 import requests
 
 
-DEFAULT_EMAIL = "kao264918@gmail.com"
-DEFAULT_PASSWORD = "Password123"
+DEFAULT_EMAIL = "smoke@example.com"
+DEFAULT_PASSWORD = "Password123!"
 
 BASE_URLS = {
     "dev": {

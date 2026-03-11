@@ -18,11 +18,7 @@ railway link  # 選擇你的 production 專案
 
 ### 建立 Production 帳號
 ```bash
-# 使用預設帳號 (kao264918@gmail.com / Test@1234)
-railway run python scripts/create_user_any_db.py
-
-# 或自訂帳密
-railway run -e EMAIL="custom@example.com" -e PASSWORD="MySecurePass123" -e FULL_NAME="John Doe" python scripts/create_user_any_db.py
+railway run -e EMAIL="user@example.com" -e PASSWORD="Password123!" -e FULL_NAME="Example User" python scripts/create_user_any_db.py
 ```
 
 ---
@@ -53,10 +49,10 @@ cd b2b-quotation-system-backend
 source venv/bin/activate
 
 # 使用 .env 中的 DATABASE_URL
-python scripts/create_user_any_db.py
+EMAIL="user@example.com" PASSWORD="Password123!" python scripts/create_user_any_db.py
 
 # 或自訂帳密
-EMAIL="test@example.com" PASSWORD="Test@123" python scripts/create_user_any_db.py
+EMAIL="custom@example.com" PASSWORD="AnotherPassword123!" FULL_NAME="Example User" python scripts/create_user_any_db.py
 ```
 
 ---
@@ -66,9 +62,9 @@ EMAIL="test@example.com" PASSWORD="Test@123" python scripts/create_user_any_db.p
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
 | `DATABASE_URL` | `.env` 中的值 | PostgreSQL 連線字串（必填） |
-| `EMAIL` | `kao264918@gmail.com` | 帳號 Email |
-| `PASSWORD` | `Test@1234` | 帳號密碼（明碼，會自動 hash） |
-| `FULL_NAME` | `Kevin Kao` | 使用者全名 |
+| `EMAIL` | 無預設值 | 帳號 Email（必填） |
+| `PASSWORD` | 無預設值 | 帳號密碼（明碼輸入，腳本內會自動 hash） |
+| `FULL_NAME` | `Example User` | 使用者全名 |
 
 ---
 

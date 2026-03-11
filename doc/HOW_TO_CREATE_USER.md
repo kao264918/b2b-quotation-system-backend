@@ -7,14 +7,8 @@
 
 ## 🛠️ 使用方式
 
-### 1. 修改帳號密碼
-預設腳本內寫死了特定的測試帳號。若要建立新使用者，請編輯 `scripts/create_manual_user.py` 的最後一行：
-
-```python
-if __name__ == "__main__":
-    # 將 email 和 password 修改為你想要的內容
-    create_manual_user("your_email@example.com", "YourPassword123")
-```
+### 1. 直接輸入帳號密碼
+腳本會在執行時要求輸入 Email 與 Password，不需要先修改原始碼。
 
 ### 2. 在本地開發環境執行 (Local)
 
