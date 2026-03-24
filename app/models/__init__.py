@@ -13,6 +13,7 @@ from .vendor_quote import VendorQuote
 # Snapshot
 from .quote import Quote, QuoteItem
 from .invoice import Invoice, InvoiceItem
+from .promotion import Promotion
 
 # System
 from .audit_log import AuditLog
@@ -21,4 +22,3 @@ from .session import RefreshSession
 from .token import VerificationToken, PasswordResetToken
 from .user_status import UserStatus, UserRole
 from .registration_request import RegistrationRequest, RegistrationStatus
-

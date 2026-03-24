@@ -36,6 +36,13 @@ class InvoiceBase(BaseModel):
     accounting_status: Optional[str] = None  # unpaid, paid
     
     subtotal: Decimal
+    promotion_discount_amount: Decimal = Decimal("0.00")
+    promotion_code_snapshot: Optional[str] = None
+    promotion_name_snapshot: Optional[str] = None
+    promotion_type_snapshot: Optional[str] = None
+    promotion_value_snapshot: Optional[Decimal] = None
+    promotion_scope_snapshot: Optional[str] = None
+    promotion_scope_category_snapshot: Optional[str] = None
     tax_total: Decimal
     total: Decimal
     
@@ -78,6 +85,20 @@ class InvoiceCustomer(BaseModel):
     
     model_config = ConfigDict(from_attributes=True)
 
+
+class InvoiceQuoteSummary(BaseModel):
+    id: str
+    quote_number: str
+    title: str
+    status: Optional[str] = None
+    version: Optional[int] = None
+    cost_status: Optional[str] = None
+    total_cost: Optional[Decimal] = None
+    gross_profit_amount: Optional[Decimal] = None
+    gross_profit_rate: Optional[Decimal] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 class Invoice(InvoiceBase):
     id: str
     invoice_number: str
@@ -88,5 +109,14 @@ class Invoice(InvoiceBase):
     
     # Embedded customer info
     customer: Optional[InvoiceCustomer] = None
+    quote: Optional[InvoiceQuoteSummary] = None
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class InvoiceListResponse(BaseModel):
+    items: List[Invoice]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

@@ -22,7 +22,7 @@ class DashboardTrendPoint(BaseModel):
 
 
 class DashboardTrendResponse(BaseModel):
-    granularity: Literal["month", "quarter", "year"]
+    granularity: Literal["month_day", "quarter_week", "year_month"]
     data: list[DashboardTrendPoint]
     has_more: bool
     earliest_confirmed_at: datetime | None = None

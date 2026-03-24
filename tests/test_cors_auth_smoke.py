@@ -18,7 +18,7 @@ from app.models.user import User
 
 
 @pytest.fixture()
-def test_user_credentials():
+def test_user_credentials(ensure_database_available):
     db = SessionLocal()
     email = f"cors-smoke-{uuid.uuid4().hex[:12]}@example.com"
     password = "CorsSmoke123!"

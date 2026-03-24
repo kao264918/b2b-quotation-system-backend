@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, inspect, text
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from app.config import settings
+from app.services.schema_guard import check_required_schema
 
 
 def mask_database_url(database_url: str) -> str:
@@ -31,6 +32,12 @@ def check_db():
         result = conn.execute(text("SELECT version_num FROM alembic_version"))
         version = result.scalar()
         print(f"Current Alembic Version in DB: {version}")
+
+    schema_result = check_required_schema(engine)
+    if schema_result.ok:
+        print("Promotion/Quote/Invoice schema: OK")
+    else:
+        print(f"Promotion/Quote/Invoice schema: OUTDATED ({schema_result.detail})")
 
 if __name__ == "__main__":
     check_db()

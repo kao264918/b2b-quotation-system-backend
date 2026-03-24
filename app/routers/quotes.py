@@ -10,6 +10,7 @@ from app.crud.quote import QuoteValidationError
 from app.database import get_db
 from app.deps.auth import get_current_user
 from app.models.user import User
+from app.services.promotion_pricing import PromotionValidationError, get_promotion_runtime_status, validate_promotion_for_quote
 
 router = APIRouter()
 
@@ -20,6 +21,49 @@ def can_view_internal_cost(user: User) -> bool:
 
 def _serialize_quote_for_user(quote: Any, current_user: User) -> dict:
     data = schemas.Quote.model_validate(quote).model_dump()
+    if quote.status == "draft":
+        if getattr(quote, "promotion_id", None) and getattr(quote, "promotion", None):
+            invalid_code = None
+            invalid_message = None
+            is_eligible = True
+            try:
+                validate_promotion_for_quote(
+                    quote._sa_instance_state.session,
+                    quote.promotion,
+                    quote.items,
+                    quote.subtotal,
+                )
+            except PromotionValidationError as exc:
+                is_eligible = False
+                invalid_code = exc.code
+                invalid_message = exc.message
+            data["applied_promotion"] = {
+                "id": quote.promotion.id,
+                "code": quote.promotion.promotion_code,
+                "name": quote.promotion.promotion_name,
+                "type": quote.promotion.type,
+                "value": quote.promotion.discount_value,
+                "scope": quote.promotion.scope,
+                "scope_category": quote.promotion.scope_category,
+                "discount_amount": quote.promotion_discount_amount,
+                "runtime_status": get_promotion_runtime_status(quote.promotion),
+                "is_eligible": is_eligible,
+                "invalid_code": invalid_code,
+                "invalid_message": invalid_message,
+                "source": "live",
+            }
+    elif getattr(quote, "promotion_discount_amount", None):
+        data["applied_promotion"] = {
+            "id": quote.promotion_id,
+            "code": quote.promotion_code_snapshot,
+            "name": quote.promotion_name_snapshot,
+            "type": quote.promotion_type_snapshot,
+            "value": quote.promotion_value_snapshot,
+            "scope": quote.promotion_scope_snapshot,
+            "scope_category": quote.promotion_scope_category_snapshot,
+            "discount_amount": quote.promotion_discount_amount,
+            "source": "snapshot",
+        }
     if can_view_internal_cost(current_user):
         return data
 
@@ -180,6 +224,8 @@ def revert_quote(
     try:
         updated = crud.quote.revert_quote(db, quote=quote)
         return _serialize_quote_for_user(updated, current_user)
+    except QuoteValidationError as e:
+        raise HTTPException(status_code=400, detail=e.to_detail())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
