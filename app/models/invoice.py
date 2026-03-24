@@ -21,6 +21,13 @@ class Invoice(Base):
     accounting_status: Mapped[str | None] = mapped_column(String, nullable=True)  # unpaid, paid
     
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    promotion_discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    promotion_code_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
+    promotion_name_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
+    promotion_type_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    promotion_value_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    promotion_scope_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    promotion_scope_category_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     

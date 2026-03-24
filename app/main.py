@@ -5,15 +5,17 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.config import settings
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.deps.auth import get_current_user, require_superuser
-from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units, dashboard
+from app.routers import auth, customers, vendors, catalog, tax_categories, templates, rfqs, quotes, invoices, units, dashboard, promotions
 from app.routers.internal import vendor_quotes
 from app.core.request_id import RequestIdMiddleware, get_request_id
 from app.core.request_logging import RequestLoggingMiddleware
 from app.core.logging import setup_logging
+from app.services.schema_guard import check_required_schema
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,13 @@ app = FastAPI(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    if isinstance(exc, (ProgrammingError, OperationalError)):
+        error_text = str(getattr(exc, "orig", exc)).lower()
+        if any(keyword in error_text for keyword in ("undefined table", "does not exist", "undefined column", "no such table", "no such column")):
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": "Database schema mismatch. Run `alembic upgrade head` and restart the backend."},
+            )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},
@@ -238,6 +247,12 @@ app.include_router(
     tags=["dashboard"],
     dependencies=[Depends(get_current_user)],
 )
+app.include_router(
+    promotions.router,
+    prefix=f"{settings.API_V1_STR}/promotions",
+    tags=["promotions"],
+    dependencies=[Depends(get_current_user)],
+)
 
 # Internal Routers
 app.include_router(
@@ -281,5 +296,17 @@ def health_check():
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "unhealthy", "detail": "database unreachable"},
+        )
+    schema_result = check_required_schema(engine)
+    if not schema_result.ok:
+        logger.error("Health check failed: schema outdated (%s)", schema_result.detail)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unhealthy",
+                "detail": "database schema outdated",
+                "reason": schema_result.detail,
+                "action": "run alembic upgrade head",
+            },
         )
     return {"status": "healthy"}

@@ -7,10 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
 from app.models.catalog import CatalogItem
+from app.models.promotion import Promotion
 from app.models.quote import Quote, QuoteItem
 from app.models.audit_log import AuditLog
 from app.schemas.quote import QuoteCreate, QuoteUpdate
 from app.services.quote_costs import identify_missing_cost_item_ids, recalculate_quote_cost_fields
+from app.services.promotion_pricing import (
+    PromotionValidationError,
+    recalculate_quote_amounts_with_promotion,
+    validate_promotion_for_quote,
+)
 
 # Valid status transitions
 VALID_TRANSITIONS = {
@@ -25,6 +31,7 @@ AUDIT_CATEGORIES = {
     "create": "建立報價單",
     "update_items": "更新項目內容",
     "update_tax": "更新稅務設定",
+    "update_promotion": "更新促銷活動",
     "status_change": "狀態變更",
     "accounting_status_change": "會計狀態變更",
     "revert": "重啟報價",
@@ -40,6 +47,27 @@ class QuoteValidationError(ValueError):
 
     def to_detail(self) -> dict:
         return {"code": self.code, "message": self.message, **self.extra}
+
+
+def _is_quote_valid_until_expired(quote: Quote) -> bool:
+    if not quote.valid_until:
+        return False
+    valid_until = quote.valid_until
+    if valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    return valid_until < datetime.now(timezone.utc)
+
+
+def _promotion_snapshot_payload(quote: Quote) -> dict | None:
+    if not quote.promotion_id:
+        return None
+    return {
+        "promotion_id": quote.promotion_id,
+        "promotion_name": quote.promotion_name_snapshot or getattr(quote.promotion, "promotion_name", None),
+        "promotion_type": quote.promotion_type_snapshot or getattr(quote.promotion, "type", None),
+        "promotion_value": str(quote.promotion_value_snapshot or getattr(quote.promotion, "discount_value", "0.00")),
+        "promotion_discount_amount": str(quote.promotion_discount_amount),
+    }
 
 
 class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
@@ -95,10 +123,17 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
 
         db.flush()
         db.refresh(db_obj)
+        self._apply_promotion_to_quote(db, quote=db_obj, promotion_id=obj_data.get("promotion_id"))
         recalculate_quote_cost_fields(db_obj)
         
         # Create audit log
-        self._create_audit_log(db, db_obj.id, "create", AUDIT_CATEGORIES["create"], {"version": 1})
+        self._create_audit_log(
+            db,
+            db_obj.id,
+            "create",
+            AUDIT_CATEGORIES["create"],
+            {"version": 1, "promotion": _promotion_snapshot_payload(db_obj)},
+        )
             
         db.commit()
         db.refresh(db_obj)
@@ -134,6 +169,11 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         
         if new_status not in VALID_TRANSITIONS.get(current_status, []):
             raise ValueError(f"Invalid status transition: {current_status} → {new_status}")
+        if new_status == "confirmed" and _is_quote_valid_until_expired(quote):
+            raise QuoteValidationError(
+                "QUOTATION_EXPIRED",
+                "Quotation valid until date has already passed.",
+            )
         
         old_status = quote.status
         quote.status = new_status
@@ -142,6 +182,7 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         if new_status == "confirmed" and quote.accounting_status is None:
             quote.accounting_status = "unpaid"
         if new_status == "confirmed":
+            self._apply_promotion_to_quote(db, quote=quote, promotion_id=quote.promotion_id)
             recalculate_quote_cost_fields(quote)
             missing_item_ids = identify_missing_cost_item_ids(quote.items)
             if missing_item_ids:
@@ -150,12 +191,14 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
                     "Quotation contains items without cost snapshot.",
                     {"missing_item_ids": missing_item_ids},
                 )
+            self._snapshot_promotion(quote)
             quote.confirmed_at = datetime.now(timezone.utc)
         
         # Create audit log
         self._create_audit_log(db, quote.id, "status_change", AUDIT_CATEGORIES["status_change"], {
             "from": old_status,
-            "to": new_status
+            "to": new_status,
+            "promotion": _promotion_snapshot_payload(quote),
         })
         
         db.add(quote)
@@ -198,6 +241,26 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         quote.status = "draft"
         quote.accounting_status = None  # Draft quotes have no accounting status
         quote.confirmed_at = None
+        quote.promotion_code_snapshot = None
+        quote.promotion_name_snapshot = None
+        quote.promotion_type_snapshot = None
+        quote.promotion_value_snapshot = None
+        quote.promotion_scope_snapshot = None
+        quote.promotion_scope_category_snapshot = None
+        try:
+            self._apply_promotion_to_quote(db, quote=quote, promotion_id=quote.promotion_id)
+        except QuoteValidationError as exc:
+            if not exc.code.startswith("PROMOTION_"):
+                raise
+            quote.subtotal = sum((Decimal(item.subtotal) for item in quote.items), Decimal("0.00"))
+            amounts = recalculate_quote_amounts_with_promotion(
+                Decimal(quote.subtotal),
+                quote.tax_setting,
+                None,
+            )
+            quote.promotion_discount_amount = amounts["promotion_discount_amount"]
+            quote.tax_total = amounts["tax_total"]
+            quote.total = amounts["total"]
         recalculate_quote_cost_fields(quote)
         
         # Create audit log
@@ -249,10 +312,13 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         elif changes:
             # Create audit log for non-item changes
             category = "update_tax" if "tax_total" in changes else "update_items"
+            if "promotion_id" in changes:
+                category = "update_promotion"
             self._create_audit_log(db, quote.id, category, AUDIT_CATEGORIES.get(category, "更新"), changes)
         
         db.flush()
         db.refresh(quote)
+        self._apply_promotion_to_quote(db, quote=quote, promotion_id=obj_data.get("promotion_id", quote.promotion_id))
         recalculate_quote_cost_fields(quote)
         
         db.add(quote)
@@ -344,5 +410,44 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
 
         data["snapshot_cost"] = Decimal(catalog_item.reference_cost)
         return data
+
+    def _apply_promotion_to_quote(self, db: Session, *, quote: Quote, promotion_id: str | None) -> None:
+        quote.subtotal = sum((Decimal(item.subtotal) for item in quote.items), Decimal("0.00"))
+        promotion = None
+        if promotion_id:
+            promotion = db.query(Promotion).filter(Promotion.id == promotion_id).first()
+            if not promotion:
+                raise QuoteValidationError("PROMOTION_NOT_FOUND", "Promotion not found.")
+            try:
+                validate_promotion_for_quote(db, promotion, quote.items, Decimal(quote.subtotal))
+            except PromotionValidationError as exc:
+                raise QuoteValidationError(exc.code, exc.message)
+        amounts = recalculate_quote_amounts_with_promotion(
+            Decimal(quote.subtotal),
+            quote.tax_setting,
+            promotion,
+        )
+        quote.promotion_id = promotion.id if promotion else None
+        quote.promotion_discount_amount = amounts["promotion_discount_amount"]
+        quote.tax_total = amounts["tax_total"]
+        quote.total = amounts["total"]
+
+    def _snapshot_promotion(self, quote: Quote) -> None:
+        if not quote.promotion:
+            quote.promotion_code_snapshot = None
+            quote.promotion_name_snapshot = None
+            quote.promotion_type_snapshot = None
+            quote.promotion_value_snapshot = None
+            quote.promotion_scope_snapshot = None
+            quote.promotion_scope_category_snapshot = None
+            quote.promotion_discount_amount = Decimal(quote.promotion_discount_amount or 0)
+            return
+
+        quote.promotion_code_snapshot = quote.promotion.promotion_code
+        quote.promotion_name_snapshot = quote.promotion.promotion_name
+        quote.promotion_type_snapshot = quote.promotion.type
+        quote.promotion_value_snapshot = Decimal(quote.promotion.discount_value)
+        quote.promotion_scope_snapshot = quote.promotion.scope
+        quote.promotion_scope_category_snapshot = quote.promotion.scope_category
 
 quote = CRUDQuote(Quote)

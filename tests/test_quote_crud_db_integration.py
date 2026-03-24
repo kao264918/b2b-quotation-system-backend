@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -11,6 +11,7 @@ from app.database import Base
 from app.models.audit_log import AuditLog
 from app.models.catalog import CatalogItem
 from app.models.customer import Customer
+from app.models.promotion import Promotion
 from app.models.quote import Quote, QuoteItem
 from app.models.rfq import RFQ
 from app.schemas.quote import QuoteCreate
@@ -30,6 +31,7 @@ def db_session():
         tables=[
             Customer.__table__,
             CatalogItem.__table__,
+            Promotion.__table__,
             RFQ.__table__,
             Quote.__table__,
             QuoteItem.__table__,
@@ -48,6 +50,7 @@ def db_session():
                 QuoteItem.__table__,
                 Quote.__table__,
                 RFQ.__table__,
+                Promotion.__table__,
                 CatalogItem.__table__,
                 Customer.__table__,
                 AuditLog.__table__,
@@ -187,6 +190,65 @@ def test_confirm_blocks_quote_with_missing_snapshot_cost(db_session: Session):
 
     assert exc.value.code == "QUOTATION_COST_INCOMPLETE"
     assert exc.value.extra["missing_item_ids"] == ["item-missing"]
+
+
+def test_confirm_blocks_expired_quote_valid_until(db_session: Session):
+    _seed_customer(db_session)
+    _seed_rfq(db_session)
+    _seed_catalog_item(db_session, "catalog-1", "ITEM-001", Decimal("60.00"))
+
+    quote_in = _build_quote_create("customer-1", "rfq-1", "catalog-1")
+    quote_in.valid_until = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1)
+    created = quote_crud.create(db_session, obj_in=quote_in)
+
+    with pytest.raises(QuoteValidationError) as exc:
+        quote_crud.update_status(db_session, quote=created, new_status="confirmed")
+
+    assert exc.value.code == "QUOTATION_EXPIRED"
+
+
+def test_revert_keeps_quote_editable_when_live_promotion_is_no_longer_valid(db_session: Session):
+    _seed_customer(db_session)
+    _seed_rfq(db_session)
+    _seed_catalog_item(db_session, "catalog-1", "ITEM-001", Decimal("60.00"))
+
+    promotion = Promotion(
+        id="promo-1",
+        promotion_code="PROMO-2603-001",
+        promotion_name="Spring Promo",
+        type="percentage",
+        discount_value=Decimal("10.00"),
+        minimum_order_amount=Decimal("0.00"),
+        scope="all_products",
+        scope_category=None,
+        start_at=datetime.now(timezone.utc) - timedelta(days=1),
+        end_at=datetime.now(timezone.utc) + timedelta(days=7),
+        is_active=True,
+    )
+    db_session.add(promotion)
+    db_session.commit()
+
+    quote_in = _build_quote_create("customer-1", "rfq-1", "catalog-1")
+    quote_in.promotion_id = promotion.id
+    created = quote_crud.create(db_session, obj_in=quote_in)
+    confirmed = quote_crud.update_status(db_session, quote=created, new_status="confirmed")
+
+    promotion.is_active = False
+    db_session.add(promotion)
+    db_session.commit()
+    db_session.refresh(confirmed)
+
+    reverted = quote_crud.revert_quote(db_session, quote=confirmed)
+
+    assert reverted.status == "draft"
+    assert reverted.accounting_status is None
+    assert reverted.confirmed_at is None
+    assert reverted.promotion_id == promotion.id
+    assert reverted.promotion_code_snapshot is None
+    assert reverted.promotion_name_snapshot is None
+    assert reverted.promotion_discount_amount == Decimal("0.00")
+    assert reverted.tax_total == Decimal("50.00")
+    assert reverted.total == Decimal("1050.00")
 
 
 def test_get_multi_sorting_puts_missing_cost_last(db_session: Session):

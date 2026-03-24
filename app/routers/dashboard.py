@@ -15,7 +15,7 @@ router = APIRouter()
 def read_dashboard_trend(
     *,
     db: Session = Depends(get_db),
-    granularity: Literal["month", "quarter", "year"] = Query(...),
+    granularity: Literal["month_day", "quarter_week", "year_month"] = Query(...),
     limit: int = Query(12, ge=1),
     before: datetime | None = Query(None),
 ):

@@ -1,26 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
-from sqlalchemy import Integer, and_, case, extract, func
 from sqlalchemy.orm import Session
 
 from app.models.quote import Quote
 
-TrendGranularity = Literal["month", "quarter", "year"]
+TrendGranularity = Literal["month_day", "quarter_week", "year_month"]
 
 PERCENT_ZERO = Decimal("0.00")
 PERCENT_Q = Decimal("0.01")
+UTC = timezone.utc
 
 
 @dataclass(frozen=True)
 class PeriodAggregate:
-    year: int
-    month: int | None
-    quarter: int | None
+    key: str
+    bucket_start: datetime
+    label: str
     revenue: Decimal
     cost: Decimal
 
@@ -37,25 +37,77 @@ def _q2(value: Decimal) -> Decimal:
     return value.quantize(PERCENT_Q, rounding=ROUND_HALF_UP)
 
 
-def _period_label(period: PeriodAggregate, granularity: TrendGranularity) -> str:
-    if granularity == "month":
-        assert period.month is not None
-        return f"{period.year:04d}-{period.month:02d}"
-    if granularity == "quarter":
-        assert period.quarter is not None
-        return f"{period.year:04d}-Q{period.quarter}"
-    return f"{period.year:04d}"
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
-def _period_start(period: PeriodAggregate, granularity: TrendGranularity) -> datetime:
-    if granularity == "month":
-        assert period.month is not None
-        return datetime(period.year, period.month, 1, tzinfo=timezone.utc)
-    if granularity == "quarter":
-        assert period.quarter is not None
-        month = (period.quarter - 1) * 3 + 1
-        return datetime(period.year, month, 1, tzinfo=timezone.utc)
-    return datetime(period.year, 1, 1, tzinfo=timezone.utc)
+def _start_of_month(value: datetime) -> datetime:
+    value = _as_utc(value)
+    return datetime(value.year, value.month, 1, tzinfo=UTC)
+
+
+def _start_of_next_month(value: datetime) -> datetime:
+    month_start = _start_of_month(value)
+    if month_start.month == 12:
+        return datetime(month_start.year + 1, 1, 1, tzinfo=UTC)
+    return datetime(month_start.year, month_start.month + 1, 1, tzinfo=UTC)
+
+
+def _start_of_quarter(value: datetime) -> datetime:
+    value = _as_utc(value)
+    quarter_month = ((value.month - 1) // 3) * 3 + 1
+    return datetime(value.year, quarter_month, 1, tzinfo=UTC)
+
+
+def _start_of_next_quarter(value: datetime) -> datetime:
+    quarter_start = _start_of_quarter(value)
+    if quarter_start.month == 10:
+        return datetime(quarter_start.year + 1, 1, 1, tzinfo=UTC)
+    return datetime(quarter_start.year, quarter_start.month + 3, 1, tzinfo=UTC)
+
+
+def _start_of_year(value: datetime) -> datetime:
+    value = _as_utc(value)
+    return datetime(value.year, 1, 1, tzinfo=UTC)
+
+
+def _start_of_next_year(value: datetime) -> datetime:
+    year_start = _start_of_year(value)
+    return datetime(year_start.year + 1, 1, 1, tzinfo=UTC)
+
+
+def _shift_year(value: datetime, years: int) -> datetime:
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:
+        return value.replace(month=2, day=28, year=value.year + years)
+
+
+def _shift_month(value: datetime, months: int) -> datetime:
+    month_index = (value.month - 1) + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    return datetime(year, month, 1, tzinfo=UTC)
+
+
+def _bucket_start(value: datetime, granularity: TrendGranularity) -> datetime:
+    value = _as_utc(value)
+    if granularity == "month_day":
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
+    if granularity == "quarter_week":
+        monday = value - timedelta(days=value.weekday())
+        return datetime(monday.year, monday.month, monday.day, tzinfo=UTC)
+    return datetime(value.year, value.month, 1, tzinfo=UTC)
+
+
+def _format_label(bucket_start: datetime, granularity: TrendGranularity) -> str:
+    if granularity == "month_day":
+        return bucket_start.strftime("%m/%d")
+    if granularity == "quarter_week":
+        return f"{bucket_start.strftime('%m/%d')} 週"
+    return bucket_start.strftime("%Y-%m")
 
 
 def _period_margin(revenue: Decimal, cost: Decimal) -> Decimal:
@@ -72,28 +124,61 @@ def _growth(current: Decimal, previous: Decimal | None) -> Decimal | None:
     return _q2((current - previous) / previous * Decimal("100"))
 
 
-def _previous_key(period: PeriodAggregate, granularity: TrendGranularity) -> tuple[int, int | None, int | None] | None:
-    if granularity == "year":
-        return None
-    if granularity == "month":
-        assert period.month is not None
-        if period.month == 1:
-            return (period.year - 1, 12, None)
-        return (period.year, period.month - 1, None)
-    assert period.quarter is not None
-    if period.quarter == 1:
-        return (period.year - 1, None, 4)
-    return (period.year, None, period.quarter - 1)
+def _previous_bucket_start(bucket_start: datetime, granularity: TrendGranularity) -> datetime | None:
+    if granularity == "month_day":
+        return bucket_start - timedelta(days=1)
+    if granularity == "quarter_week":
+        return bucket_start - timedelta(days=7)
+    return _shift_month(bucket_start, -1)
 
 
-def _yoy_key(period: PeriodAggregate, granularity: TrendGranularity) -> tuple[int, int | None, int | None]:
-    if granularity == "month":
-        assert period.month is not None
-        return (period.year - 1, period.month, None)
-    if granularity == "quarter":
-        assert period.quarter is not None
-        return (period.year - 1, None, period.quarter)
-    return (period.year - 1, None, None)
+def _yoy_bucket_start(bucket_start: datetime, granularity: TrendGranularity) -> datetime:
+    if granularity == "quarter_week":
+        return _shift_year(bucket_start, -1)
+    return _shift_year(bucket_start, -1)
+
+
+def _period_bounds(now: datetime, granularity: TrendGranularity) -> tuple[datetime, datetime, datetime, datetime]:
+    if granularity == "month_day":
+        current_start = _start_of_month(now)
+        current_end = _start_of_next_month(now)
+        comparison_start = _shift_year(current_start, -1)
+        comparison_end = _shift_year(current_end, -1)
+        return current_start, current_end, comparison_start, comparison_end
+    if granularity == "quarter_week":
+        current_start = _start_of_quarter(now)
+        current_end = _start_of_next_quarter(now)
+        comparison_start = _shift_year(current_start, -1)
+        comparison_end = _shift_year(current_end, -1)
+        return current_start, current_end, comparison_start, comparison_end
+    current_start = _start_of_year(now)
+    current_end = _start_of_next_year(now)
+    comparison_start = _shift_year(current_start, -1)
+    comparison_end = _shift_year(current_end, -1)
+    return current_start, current_end, comparison_start, comparison_end
+
+
+def _aggregate_quotes(quotes: list[Quote], granularity: TrendGranularity) -> dict[datetime, PeriodAggregate]:
+    buckets: dict[datetime, dict[str, Decimal]] = {}
+    for quote in quotes:
+        confirmed_at = getattr(quote, "confirmed_at", None)
+        if confirmed_at is None:
+            continue
+        bucket_start = _bucket_start(confirmed_at, granularity)
+        entry = buckets.setdefault(bucket_start, {"revenue": Decimal("0"), "cost": Decimal("0")})
+        entry["revenue"] += _to_decimal(getattr(quote, "subtotal", 0))
+        entry["cost"] += _to_decimal(getattr(quote, "total_cost", 0))
+
+    return {
+        bucket_start: PeriodAggregate(
+            key=bucket_start.isoformat(),
+            bucket_start=bucket_start,
+            label=_format_label(bucket_start, granularity),
+            revenue=_q2(values["revenue"]),
+            cost=_q2(values["cost"]),
+        )
+        for bucket_start, values in buckets.items()
+    }
 
 
 def get_trend_data(
@@ -104,104 +189,44 @@ def get_trend_data(
     before: datetime | None,
 ) -> dict:
     safe_limit = max(1, min(limit, 12))
-    safe_before = before
-    if safe_before is not None and safe_before.tzinfo is None:
-        safe_before = safe_before.replace(tzinfo=timezone.utc)
+    safe_before = _as_utc(before) if before is not None else None
+    now = datetime.now(UTC)
+    current_start, current_end, comparison_start, comparison_end = _period_bounds(now, granularity)
 
-    year_expr = extract("year", Quote.confirmed_at).cast(Integer)
-    month_expr = extract("month", Quote.confirmed_at).cast(Integer)
-    quarter_expr = case(
-        (month_expr <= 3, 1),
-        (month_expr <= 6, 2),
-        (month_expr <= 9, 3),
-        else_=4,
+    base_query = db.query(Quote).filter(
+        Quote.confirmed_at.is_not(None),
+        Quote.status.in_(["confirmed", "closed"]),
     )
 
-    filters = [
-        Quote.status == "confirmed",
-        Quote.confirmed_at.is_not(None),
-    ]
-
+    current_query = base_query.filter(
+        Quote.confirmed_at >= current_start,
+        Quote.confirmed_at < current_end,
+    )
     if safe_before is not None:
-        filters.append(Quote.confirmed_at < safe_before)
+        current_query = current_query.filter(Quote.confirmed_at < safe_before)
 
-    base_columns = [
-        func.coalesce(func.sum(Quote.subtotal), 0).label("period_revenue"),
-        func.coalesce(func.sum(Quote.total_cost), 0).label("period_cost"),
-    ]
+    comparison_query = base_query.filter(
+        Quote.confirmed_at >= comparison_start,
+        Quote.confirmed_at < comparison_end,
+    )
 
-    if granularity == "month":
-        rows = (
-            db.query(
-                year_expr.label("period_year"),
-                month_expr.label("period_month"),
-                *base_columns,
-            )
-            .filter(*filters)
-            .group_by(year_expr, month_expr)
-            .order_by(year_expr.desc(), month_expr.desc())
-            .all()
-        )
-    elif granularity == "quarter":
-        rows = (
-            db.query(
-                year_expr.label("period_year"),
-                quarter_expr.label("period_quarter"),
-                *base_columns,
-            )
-            .filter(*filters)
-            .group_by(year_expr, quarter_expr)
-            .order_by(year_expr.desc(), quarter_expr.desc())
-            .all()
-        )
-    else:
-        rows = (
-            db.query(
-                year_expr.label("period_year"),
-                *base_columns,
-            )
-            .filter(*filters)
-            .group_by(year_expr)
-            .order_by(year_expr.desc())
-            .all()
-        )
+    current_aggregates = _aggregate_quotes(current_query.all(), granularity)
+    comparison_aggregates = _aggregate_quotes(comparison_query.all(), granularity)
 
-    aggregates: list[PeriodAggregate] = []
-    for row in rows:
-        month: int | None = None
-        quarter: int | None = None
-        if granularity == "month":
-            month = int(row.period_month)
-        elif granularity == "quarter":
-            quarter = int(row.period_quarter)
-
-        aggregates.append(
-            PeriodAggregate(
-                year=int(row.period_year),
-                month=month,
-                quarter=quarter,
-                revenue=_q2(_to_decimal(row.period_revenue)),
-                cost=_q2(_to_decimal(row.period_cost)),
-            )
-        )
-
-    has_more = len(aggregates) > safe_limit
-    current_page = aggregates[:safe_limit]
-
-    value_map: dict[tuple[int, int | None, int | None], PeriodAggregate] = {}
-    for item in aggregates:
-        value_map[(item.year, item.month, item.quarter)] = item
+    ordered_current = sorted(current_aggregates.values(), key=lambda item: item.bucket_start, reverse=True)
+    has_more = len(ordered_current) > safe_limit
+    current_page = ordered_current[:safe_limit]
 
     data: list[dict] = []
     for period in current_page:
-        prev_key = _previous_key(period, granularity)
-        yoy_key = _yoy_key(period, granularity)
-        prev = value_map.get(prev_key) if prev_key is not None else None
-        yoy = value_map.get(yoy_key)
+        prev_start = _previous_bucket_start(period.bucket_start, granularity)
+        yoy_start = _yoy_bucket_start(period.bucket_start, granularity)
+        prev = current_aggregates.get(prev_start) if prev_start is not None else None
+        yoy = comparison_aggregates.get(yoy_start)
 
         margin = _period_margin(period.revenue, period.cost)
         point = {
-            "label": _period_label(period, granularity),
+            "label": period.label,
             "revenue": period.revenue,
             "cost": period.cost,
             "margin_rate": margin,
@@ -212,15 +237,9 @@ def get_trend_data(
             "mom_margin": _growth(margin, _period_margin(prev.revenue, prev.cost)) if prev is not None else None,
             "yoy_margin": _growth(margin, _period_margin(yoy.revenue, yoy.cost)) if yoy is not None else None,
         }
-        if granularity == "year":
-            point["mom_revenue"] = None
-            point["mom_cost"] = None
-            point["mom_margin"] = None
         data.append(point)
 
-    earliest_confirmed_at: datetime | None = None
-    if current_page:
-        earliest_confirmed_at = _period_start(current_page[-1], granularity)
+    earliest_confirmed_at = current_page[-1].bucket_start if current_page else None
 
     return {
         "granularity": granularity,

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -8,8 +8,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models.customer import Customer
+from app.models.promotion import Promotion
 from app.models.quote import Quote
 from app.services.dashboard_trend import get_trend_data
+
+UTC = timezone.utc
 
 
 @pytest.fixture()
@@ -19,10 +22,10 @@ def db_session():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    Base.metadata.create_all(bind=engine, tables=[Customer.__table__, Quote.__table__])
-    db = TestingSessionLocal()
+    Base.metadata.create_all(bind=engine, tables=[Customer.__table__, Promotion.__table__, Quote.__table__])
+    db = testing_session_local()
 
     customer = Customer(
         id="customer-1",
@@ -43,7 +46,7 @@ def db_session():
         yield db
     finally:
         db.close()
-        Base.metadata.drop_all(bind=engine, tables=[Quote.__table__, Customer.__table__])
+        Base.metadata.drop_all(bind=engine, tables=[Quote.__table__, Promotion.__table__, Customer.__table__])
 
 
 def _seed_quote(
@@ -75,165 +78,137 @@ def _seed_quote(
     db.add(quote)
 
 
-def test_month_aggregation_growth_and_filters(db_session: Session):
+def _start_of_month(now: datetime) -> datetime:
+    return datetime(now.year, now.month, 1, tzinfo=UTC)
+
+
+def _start_of_quarter(now: datetime) -> datetime:
+    quarter_month = ((now.month - 1) // 3) * 3 + 1
+    return datetime(now.year, quarter_month, 1, tzinfo=UTC)
+
+
+def _start_of_year(now: datetime) -> datetime:
+    return datetime(now.year, 1, 1, tzinfo=UTC)
+
+
+def test_month_day_groups_by_day_and_sums_same_day_quotes(db_session: Session):
+    now = datetime.now(UTC)
+    month_start = _start_of_month(now)
+    current_day = month_start + timedelta(days=2)
+    previous_day = month_start + timedelta(days=1)
+
+    _seed_quote(db_session, quote_id="day-1a", confirmed_at=current_day, subtotal="1000", total_cost="600")
+    _seed_quote(db_session, quote_id="day-1b", confirmed_at=current_day + timedelta(hours=1), subtotal="500", total_cost="300")
+    _seed_quote(db_session, quote_id="day-2", confirmed_at=previous_day, subtotal="800", total_cost="400")
     _seed_quote(
         db_session,
-        quote_id="m202406",
-        confirmed_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-        subtotal="1200",
-        total_cost="800",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="m202405",
-        confirmed_at=datetime(2024, 5, 20, tzinfo=timezone.utc),
-        subtotal="1000",
-        total_cost="850",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="m202306",
-        confirmed_at=datetime(2023, 6, 10, tzinfo=timezone.utc),
+        quote_id="day-yoy",
+        confirmed_at=current_day.replace(year=current_day.year - 1),
         subtotal="900",
-        total_cost="700",
+        total_cost="450",
     )
+    db_session.commit()
+
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+
+    assert result["granularity"] == "month_day"
+    assert [row["label"] for row in result["data"][:2]] == [
+        current_day.strftime("%m/%d"),
+        previous_day.strftime("%m/%d"),
+    ]
+    current_bucket = result["data"][0]
+    assert current_bucket["revenue"] == Decimal("1500.00")
+    assert current_bucket["cost"] == Decimal("900.00")
+    assert current_bucket["mom_revenue"] == Decimal("87.50")
+    assert current_bucket["yoy_revenue"] == Decimal("66.67")
+
+
+def test_quarter_week_groups_by_week_start(db_session: Session):
+    now = datetime.now(UTC)
+    quarter_start = _start_of_quarter(now)
+    current_week = quarter_start + timedelta(days=7)
+    current_week = current_week - timedelta(days=current_week.weekday())
+    previous_week = current_week - timedelta(days=7)
+
+    _seed_quote(db_session, quote_id="week-1a", confirmed_at=current_week + timedelta(days=1), subtotal="700", total_cost="350")
+    _seed_quote(db_session, quote_id="week-1b", confirmed_at=current_week + timedelta(days=2), subtotal="300", total_cost="150")
+    _seed_quote(db_session, quote_id="week-2", confirmed_at=previous_week + timedelta(days=3), subtotal="400", total_cost="200")
+    db_session.commit()
+
+    result = get_trend_data(db_session, granularity="quarter_week", limit=12, before=None)
+
+    assert result["granularity"] == "quarter_week"
+    assert result["data"][0]["label"] == f"{current_week.strftime('%m/%d')} 週"
+    assert result["data"][0]["revenue"] == Decimal("1000.00")
+    assert result["data"][1]["label"] == f"{previous_week.strftime('%m/%d')} 週"
+
+
+def test_year_month_groups_by_month(db_session: Session):
+    now = datetime.now(UTC)
+    year_start = _start_of_year(now)
+    current_month = datetime(now.year, now.month, 1, tzinfo=UTC)
+    previous_month = datetime(now.year, max(1, now.month - 1), 1, tzinfo=UTC)
+    if now.month == 1:
+        previous_month = year_start
+
+    _seed_quote(db_session, quote_id="month-1a", confirmed_at=current_month + timedelta(days=3), subtotal="1200", total_cost="700")
+    _seed_quote(db_session, quote_id="month-1b", confirmed_at=current_month + timedelta(days=4), subtotal="800", total_cost="500")
+    _seed_quote(db_session, quote_id="month-2", confirmed_at=previous_month + timedelta(days=2), subtotal="1000", total_cost="650")
+    db_session.commit()
+
+    result = get_trend_data(db_session, granularity="year_month", limit=12, before=None)
+
+    assert result["granularity"] == "year_month"
+    assert result["data"][0]["label"] == current_month.strftime("%Y-%m")
+    assert result["data"][0]["revenue"] == Decimal("2000.00")
+    if current_month != previous_month:
+        assert result["data"][1]["label"] == previous_month.strftime("%Y-%m")
+
+
+def test_closed_quotes_are_included_but_discarded_quotes_are_excluded(db_session: Session):
+    now = datetime.now(UTC)
+    month_start = _start_of_month(now)
+
+    _seed_quote(db_session, quote_id="closed-keep", confirmed_at=month_start + timedelta(days=5), subtotal="1500", total_cost="900", status="closed")
     _seed_quote(
         db_session,
-        quote_id="draft_ignore",
-        confirmed_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        quote_id="discarded-ignore",
+        confirmed_at=month_start + timedelta(days=6),
         subtotal="999",
         total_cost="100",
-        status="draft",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="null_ignore",
-        confirmed_at=None,
-        subtotal="1000",
-        total_cost="100",
+        status="discarded",
     )
     db_session.commit()
 
-    result = get_trend_data(
-        db_session,
-        granularity="month",
-        limit=12,
-        before=None,
-    )
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
 
-    assert result["granularity"] == "month"
-    assert [row["label"] for row in result["data"]][:3] == ["2024-06", "2024-05", "2023-06"]
-    june = result["data"][0]
-    assert june["revenue"] == Decimal("1200.00")
-    assert june["cost"] == Decimal("800.00")
-    assert june["margin_rate"] == Decimal("33.33")
-    assert june["mom_revenue"] == Decimal("20.00")
-    assert june["yoy_revenue"] == Decimal("33.33")
+    assert result["data"][0]["revenue"] == Decimal("1500.00")
+    assert result["data"][0]["cost"] == Decimal("900.00")
 
 
-def test_quarter_and_year_rules(db_session: Session):
-    _seed_quote(
-        db_session,
-        quote_id="q1a",
-        confirmed_at=datetime(2024, 1, 10, tzinfo=timezone.utc),
-        subtotal="400",
-        total_cost="200",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="q1b",
-        confirmed_at=datetime(2024, 3, 10, tzinfo=timezone.utc),
-        subtotal="600",
-        total_cost="300",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="q4",
-        confirmed_at=datetime(2023, 11, 10, tzinfo=timezone.utc),
-        subtotal="500",
-        total_cost="350",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="y2022",
-        confirmed_at=datetime(2022, 7, 10, tzinfo=timezone.utc),
-        subtotal="200",
-        total_cost="100",
-    )
-    db_session.commit()
+def test_month_day_pagination_with_before(db_session: Session):
+    now = datetime.now(UTC)
+    month_start = _start_of_month(now)
 
-    quarter_result = get_trend_data(
-        db_session,
-        granularity="quarter",
-        limit=12,
-        before=None,
-    )
-    assert quarter_result["data"][0]["label"] == "2024-Q1"
-    assert quarter_result["data"][0]["revenue"] == Decimal("1000.00")
-    assert quarter_result["data"][0]["yoy_revenue"] is None
-
-    year_result = get_trend_data(
-        db_session,
-        granularity="year",
-        limit=12,
-        before=None,
-    )
-    first_year = year_result["data"][0]
-    assert first_year["label"] == "2024"
-    assert first_year["mom_revenue"] is None
-    assert first_year["mom_cost"] is None
-    assert first_year["mom_margin"] is None
-
-
-def test_previous_zero_and_missing_yoy(db_session: Session):
-    _seed_quote(
-        db_session,
-        quote_id="p202404",
-        confirmed_at=datetime(2024, 4, 10, tzinfo=timezone.utc),
-        subtotal="100",
-        total_cost="20",
-    )
-    _seed_quote(
-        db_session,
-        quote_id="p202403",
-        confirmed_at=datetime(2024, 3, 10, tzinfo=timezone.utc),
-        subtotal="0",
-        total_cost="0",
-    )
-    db_session.commit()
-
-    result = get_trend_data(db_session, granularity="month", limit=12, before=None)
-    april = result["data"][0]
-    march = result["data"][1]
-
-    assert april["label"] == "2024-04"
-    assert april["mom_revenue"] == Decimal("0.00")
-    assert april["mom_cost"] == Decimal("0.00")
-    assert april["yoy_revenue"] is None
-    assert march["mom_revenue"] is None
-
-
-def test_pagination_has_more_and_before(db_session: Session):
-    for i in range(14):
-        month = 12 - (i % 12)
-        year = 2025 - (i // 12)
+    for offset in range(14):
+        confirmed_at = month_start + timedelta(days=offset)
         _seed_quote(
             db_session,
-            quote_id=f"page{i + 1}",
-            confirmed_at=datetime(year, month, 1, tzinfo=timezone.utc),
+            quote_id=f"page-{offset}",
+            confirmed_at=confirmed_at,
             subtotal="100",
             total_cost="50",
         )
     db_session.commit()
 
-    page1 = get_trend_data(db_session, granularity="month", limit=12, before=None)
+    page1 = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
     assert len(page1["data"]) == 12
     assert page1["has_more"] is True
-    assert page1["earliest_confirmed_at"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert page1["earliest_confirmed_at"] == month_start + timedelta(days=2)
 
     page2 = get_trend_data(
         db_session,
-        granularity="month",
+        granularity="month_day",
         limit=12,
         before=page1["earliest_confirmed_at"],
     )
