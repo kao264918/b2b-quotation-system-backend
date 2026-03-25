@@ -1,4 +1,5 @@
-from typing import Any, List
+from math import ceil
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -10,14 +11,26 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("", response_model=List[schemas.Invoice])
+@router.get("", response_model=schemas.InvoiceListResponse)
 def read_invoices(
     db: Session = Depends(get_db),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    quote_id: str | None = None,
+    search: str | None = None,
 ) -> Any:
     """Get all invoices (excluding soft-deleted)."""
-    return crud.invoice.get_multi(db, skip=skip, limit=limit)
+    items, total = crud.invoice.get_multi(db, skip=skip, limit=limit, quote_id=quote_id, search=search)
+    page_size = max(limit, 1)
+    page = (skip // page_size) + 1
+    total_pages = max(1, ceil(total / page_size)) if total else 1
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
 
 
 @router.post("", response_model=schemas.Invoice)

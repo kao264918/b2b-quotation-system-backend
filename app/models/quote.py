@@ -29,6 +29,14 @@ class Quote(Base):
     tax_setting: Mapped[str] = mapped_column(String(20), default="taxable_5")  # taxable_5, taxable_10, non_taxable, tax_exempt
     
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    promotion_id: Mapped[str | None] = mapped_column(ForeignKey("promotions.id"), nullable=True)
+    promotion_discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    promotion_code_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
+    promotion_name_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
+    promotion_type_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    promotion_value_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    promotion_scope_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    promotion_scope_category_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     cost_status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | missing
@@ -48,6 +56,7 @@ class Quote(Base):
     items: Mapped[List["QuoteItem"]] = relationship(back_populates="quote", cascade="all, delete-orphan")
     rfq: Mapped["RFQ"] = relationship()
     customer: Mapped["Customer"] = relationship()
+    promotion: Mapped[Optional["Promotion"]] = relationship()
 
 class QuoteItem(Base):
     __tablename__ = "quote_items"

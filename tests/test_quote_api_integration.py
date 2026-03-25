@@ -58,6 +58,20 @@ def _build_quote(cost_status: str = "ok") -> SimpleNamespace:
     )
 
 
+def _build_quote_with_customer_snapshot() -> SimpleNamespace:
+    quote = _build_quote("ok")
+    quote.customer = SimpleNamespace(
+        id="customer-1",
+        company_name="ACME Corp",
+        tax_id="123",
+        company_email=None,
+        contact_name=None,
+        contact_phone=None,
+        contact_email=None,
+    )
+    return quote
+
+
 def test_quote_confirm_blocked_when_cost_incomplete(client, monkeypatch):
     from app.routers import quotes as quotes_router
 
@@ -82,6 +96,53 @@ def test_quote_confirm_blocked_when_cost_incomplete(client, monkeypatch):
     detail = response.json()["detail"]
     assert detail["code"] == "QUOTATION_COST_INCOMPLETE"
     assert detail["missing_item_ids"] == ["item-1", "item-2"]
+
+
+def test_quote_confirm_blocked_when_valid_until_expired(client, monkeypatch):
+    from app.routers import quotes as quotes_router
+
+    monkeypatch.setattr(quotes_router.crud.quote, "get", lambda db, id: _build_quote("ok"))
+
+    def _raise_validation_error(db, quote, new_status):
+        raise QuoteValidationError(
+            "QUOTATION_EXPIRED",
+            "Quotation valid until date has already passed.",
+        )
+
+    monkeypatch.setattr(quotes_router.crud.quote, "update_status", _raise_validation_error)
+
+    response = client.patch(
+        "/api/v1/quotes/quote-1/status",
+        json={"status": "confirmed"},
+        headers={"x-csrf-token": "test-token"},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "QUOTATION_EXPIRED"
+
+
+def test_quote_revert_returns_validation_error_payload(client, monkeypatch):
+    from app.routers import quotes as quotes_router
+
+    monkeypatch.setattr(quotes_router.crud.quote, "get", lambda db, id: _build_quote("ok"))
+
+    def _raise_validation_error(db, quote):
+        raise QuoteValidationError(
+            "PROMOTION_DISABLED",
+            "Promotion is disabled.",
+        )
+
+    monkeypatch.setattr(quotes_router.crud.quote, "revert_quote", _raise_validation_error)
+
+    response = client.post(
+        "/api/v1/quotes/quote-1/revert",
+        headers={"x-csrf-token": "test-token"},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "PROMOTION_DISABLED"
 
 
 def test_quote_list_passes_sorting_to_crud(client, monkeypatch):
@@ -163,3 +224,20 @@ def test_quote_list_masks_internal_cost_fields_without_permission(client, monkey
     assert payload[0]["total_cost"] is None
     assert payload[0]["gross_profit_amount"] is None
     assert payload[0]["gross_profit_rate"] is None
+
+
+def test_quote_list_serializes_customer_summary_without_strict_customer_validation(client, monkeypatch):
+    from app.routers import quotes as quotes_router
+
+    monkeypatch.setattr(
+        quotes_router.crud.quote,
+        "get_multi",
+        lambda db, skip=0, limit=100, sort_by=None, sort_order="desc": [_build_quote_with_customer_snapshot()],
+    )
+
+    response = client.get("/api/v1/quotes")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["customer"]["company_name"] == "ACME Corp"
+    assert payload[0]["customer"]["tax_id"] == "123"

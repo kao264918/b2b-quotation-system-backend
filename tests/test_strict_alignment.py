@@ -10,7 +10,7 @@ from app.crud import user as crud_user
 import uuid
 
 @pytest.fixture(scope="module")
-def db():
+def db(ensure_database_available):
     yield SessionLocal()
 
 @pytest.fixture(scope="module")

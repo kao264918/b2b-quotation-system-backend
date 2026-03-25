@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 from datetime import datetime
 from uuid import UUID
 from app.models.registration_request import RegistrationStatus
@@ -20,8 +20,7 @@ class RegistrationRequestResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RegistrationApproveRequest(BaseModel):
     # Optional fields to override defaults when creating the user/company

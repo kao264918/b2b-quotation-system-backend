@@ -346,21 +346,35 @@ def generate_quote_excel_stream(quote: Quote, version_num: Optional[int] = None)
         safe_write(top_row, 12, float(item.subtotal))
         _normalize_item_block_bottom_border(ws, top_row)
 
-    # 4. Totals (Rows 49, 50, 51)
+    # 4. Totals
     # K(11): Label, L(12): Value
     subtotal_row = BASE_TOTAL_ROW + extra_rows
-    tax_row = subtotal_row + 1
-    grand_total_row = subtotal_row + 2
+    promotion_discount = float(getattr(quote, "promotion_discount_amount", 0) or 0)
+    has_promotion_discount = promotion_discount > 0
+    if has_promotion_discount:
+        ws.insert_rows(subtotal_row + 1, 2)
+    promotion_row = subtotal_row + 1
+    before_tax_row = subtotal_row + 2
+    tax_row = subtotal_row + 3 if has_promotion_discount else subtotal_row + 1
+    grand_total_row = subtotal_row + 4 if has_promotion_discount else subtotal_row + 2
 
     def fmt_price(val):
         return f"NT$ {val:,.0f}"
 
     safe_write(subtotal_row, 11, "小計:")
     safe_write(subtotal_row, 12, fmt_price(quote.subtotal))
-    
+
+    if has_promotion_discount:
+        safe_write(promotion_row, 11, "促銷折扣:")
+        safe_write(promotion_row, 12, f"-{fmt_price(promotion_discount)}")
+
+        before_tax = float(quote.subtotal) - promotion_discount
+        safe_write(before_tax_row, 11, "稅前金額:")
+        safe_write(before_tax_row, 12, fmt_price(before_tax))
+
     safe_write(tax_row, 11, "稅金:")
     safe_write(tax_row, 12, fmt_price(quote.tax_total))
-    
+
     safe_write(grand_total_row, 11, "總計:")
     safe_write(grand_total_row, 12, fmt_price(quote.total))
     _apply_total_row_emphasis(ws, grand_total_row)

@@ -8,5 +8,5 @@ from . import rfq
 from .vendor_quote import vendor_quote
 from .quote import quote
 from .invoice import invoice
+from .promotion import promotion
 from . import audit_log
-

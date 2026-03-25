@@ -232,7 +232,7 @@ def resend_invitation(
 # Admin: Email Logs
 # ============================================================
 from app.models.email_log import EmailLog
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
 class EmailLogResponse(BaseModel):
@@ -244,8 +244,7 @@ class EmailLogResponse(BaseModel):
     provider_message_id: Optional[str] = None
     error_reason: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.get("/admin/email-logs/{email}")
 def get_email_logs(

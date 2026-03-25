@@ -23,7 +23,7 @@ from app.models.user_status import UserStatus, UserRole
 
 
 @pytest.fixture()
-def authenticated_client():
+def authenticated_client(ensure_database_available):
     """Create a temporary user, log in, and yield an authenticated TestClient."""
     db = SessionLocal()
     email = f"smoke-{uuid.uuid4().hex[:12]}@example.com"

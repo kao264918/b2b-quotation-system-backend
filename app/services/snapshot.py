@@ -125,6 +125,13 @@ def create_invoice_from_quote(db: Session, quote_id: str) -> models.Invoice:
         items=invoice_items_in,
         
         subtotal=quote.subtotal,
+        promotion_discount_amount=quote.promotion_discount_amount,
+        promotion_code_snapshot=quote.promotion_code_snapshot,
+        promotion_name_snapshot=quote.promotion_name_snapshot,
+        promotion_type_snapshot=quote.promotion_type_snapshot,
+        promotion_value_snapshot=quote.promotion_value_snapshot,
+        promotion_scope_snapshot=quote.promotion_scope_snapshot,
+        promotion_scope_category_snapshot=quote.promotion_scope_category_snapshot,
         tax_total=quote.tax_total,
         total=quote.total
     )

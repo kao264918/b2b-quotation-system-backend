@@ -243,6 +243,82 @@ def test_rfq_flow(session, customer_id, vendor_id, item_id):
     return rfq_id
 
 
+def test_promotion_and_quote_flow(session, customer_id, item_id):
+    log("--- Testing Promotion + Quote Flow ---")
+
+    promo_payload = {
+        "promotion_name": f"Integration Promo {int(time.time())}",
+        "description": "Integration test promotion",
+        "type": "percentage",
+        "discount_value": 10,
+        "minimum_order_amount": 100,
+        "scope": "all_products",
+        "start_at": "2026-01-01T00:00:00+00:00",
+        "end_at": "2026-12-31T23:59:59+00:00",
+        "is_active": True,
+    }
+    resp = session.post(f"{BASE_URL}/promotions", json=promo_payload)
+    if resp.status_code != 200:
+        log(f"Create Promotion Failed: {resp.status_code} {resp.text}", "ERROR")
+        return
+    promotion = resp.json()
+    log(f"Created Promotion: {promotion['promotion_code']}")
+
+    quote_payload = {
+        "customer_id": customer_id,
+        "title": f"Integration Quote {int(time.time())}",
+        "tax_setting": "taxable_5",
+        "promotion_id": promotion["id"],
+        "subtotal": 1000,
+        "tax_total": 45,
+        "total": 945,
+        "items": [
+            {
+                "name": "Integration Test Item",
+                "quantity": 1,
+                "unit": "pcs",
+                "unit_price": 1000,
+                "tax_category_name": "taxable_5",
+                "tax_rate": 0.05,
+                "subtotal": 1000,
+                "tax_amount": 50,
+                "total_amount": 1050,
+                "line_total": 1050,
+                "catalog_item_id": item_id,
+            }
+        ],
+    }
+    resp = session.post(f"{BASE_URL}/quotes", json=quote_payload)
+    if resp.status_code != 200:
+        log(f"Create Quote Failed: {resp.status_code} {resp.text}", "ERROR")
+        return
+    quote = resp.json()
+    if str(quote.get("promotion_discount_amount")) not in {"100", "100.0", "100.00"}:
+        log(f"Quote promotion discount validation failed: {quote.get('promotion_discount_amount')}", "ERROR")
+    else:
+        log("Quote promotion calculation verified")
+
+    resp = session.patch(f"{BASE_URL}/quotes/{quote['id']}/status", json={"status": "confirmed"})
+    if resp.status_code != 200:
+        log(f"Confirm Quote Failed: {resp.status_code} {resp.text}", "ERROR")
+        return
+    confirmed_quote = resp.json()
+    if not confirmed_quote.get("promotion_name_snapshot"):
+        log("Quote promotion snapshot missing", "ERROR")
+    else:
+        log("Quote promotion snapshot verified")
+
+    resp = session.post(f"{BASE_URL}/quotes/{quote['id']}/create-invoice")
+    if resp.status_code != 200:
+        log(f"Create Invoice From Quote Failed: {resp.status_code} {resp.text}", "ERROR")
+        return
+    invoice = resp.json()
+    if str(invoice.get("promotion_discount_amount")) != str(confirmed_quote.get("promotion_discount_amount")):
+        log("Invoice promotion snapshot mismatch", "ERROR")
+    else:
+        log("Invoice promotion snapshot verified")
+
+
 if __name__ == "__main__":
     try:
         log("Starting System Verification...")
@@ -268,6 +344,8 @@ if __name__ == "__main__":
         if cid and vid:
             iid = test_catalog_flow(session)
             test_rfq_flow(session, cid, vid, iid)
+            if iid:
+                test_promotion_and_quote_flow(session, cid, iid)
         
         log("Verification Completed")
     except Exception as e:

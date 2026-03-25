@@ -58,14 +58,14 @@ def test_dashboard_trend_api_contract_and_params(client, monkeypatch):
     monkeypatch.setattr(dashboard_router, "get_trend_data", _mock_get_trend_data)
 
     response = client.get(
-        "/api/v1/dashboard/trend?granularity=month&limit=12&before=2025-01-01T00:00:00Z"
+        "/api/v1/dashboard/trend?granularity=month_day&limit=12&before=2025-01-01T00:00:00Z"
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["granularity"] == "month"
+    assert body["granularity"] == "month_day"
     assert body["data"][0]["label"] == "2024-06"
     assert body["has_more"] is True
-    assert captured["granularity"] == "month"
+    assert captured["granularity"] == "month_day"
     assert captured["limit"] == 12
     assert captured["before"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
 
@@ -77,5 +77,5 @@ def test_dashboard_trend_api_validation(client):
     invalid_granularity = client.get("/api/v1/dashboard/trend?granularity=all&limit=12")
     assert invalid_granularity.status_code == 422
 
-    invalid_before = client.get("/api/v1/dashboard/trend?granularity=month&limit=12&before=not-a-date")
+    invalid_before = client.get("/api/v1/dashboard/trend?granularity=month_day&limit=12&before=not-a-date")
     assert invalid_before.status_code == 422
