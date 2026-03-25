@@ -79,3 +79,26 @@ def test_dashboard_trend_api_validation(client):
 
     invalid_before = client.get("/api/v1/dashboard/trend?granularity=month_day&limit=12&before=not-a-date")
     assert invalid_before.status_code == 422
+
+
+def test_dashboard_trend_api_accepts_legacy_granularity_values(client, monkeypatch):
+    from app.routers import dashboard as dashboard_router
+
+    captured = {}
+
+    def _mock_get_trend_data(db, *, granularity, limit, before):
+        captured["granularity"] = granularity
+        return {
+            "granularity": granularity,
+            "data": [],
+            "has_more": False,
+            "earliest_confirmed_at": None,
+        }
+
+    monkeypatch.setattr(dashboard_router, "get_trend_data", _mock_get_trend_data)
+
+    response = client.get("/api/v1/dashboard/trend?granularity=month&limit=12")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["granularity"] == "month_day"
+    assert captured["granularity"] == "month_day"
