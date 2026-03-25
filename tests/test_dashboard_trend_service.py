@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -13,6 +14,7 @@ from app.models.quote import Quote
 from app.services.dashboard_trend import get_trend_data
 
 UTC = timezone.utc
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 @pytest.fixture()
@@ -79,16 +81,19 @@ def _seed_quote(
 
 
 def _start_of_month(now: datetime) -> datetime:
-    return datetime(now.year, now.month, 1, tzinfo=UTC)
+    now_local = now.astimezone(TAIPEI)
+    return datetime(now_local.year, now_local.month, 1, tzinfo=TAIPEI)
 
 
 def _start_of_quarter(now: datetime) -> datetime:
-    quarter_month = ((now.month - 1) // 3) * 3 + 1
-    return datetime(now.year, quarter_month, 1, tzinfo=UTC)
+    now_local = now.astimezone(TAIPEI)
+    quarter_month = ((now_local.month - 1) // 3) * 3 + 1
+    return datetime(now_local.year, quarter_month, 1, tzinfo=TAIPEI)
 
 
 def _start_of_year(now: datetime) -> datetime:
-    return datetime(now.year, 1, 1, tzinfo=UTC)
+    now_local = now.astimezone(TAIPEI)
+    return datetime(now_local.year, 1, 1, tzinfo=TAIPEI)
 
 
 def test_month_day_groups_by_day_and_sums_same_day_quotes(db_session: Session):
@@ -97,13 +102,13 @@ def test_month_day_groups_by_day_and_sums_same_day_quotes(db_session: Session):
     current_day = month_start + timedelta(days=2)
     previous_day = month_start + timedelta(days=1)
 
-    _seed_quote(db_session, quote_id="day-1a", confirmed_at=current_day, subtotal="1000", total_cost="600")
-    _seed_quote(db_session, quote_id="day-1b", confirmed_at=current_day + timedelta(hours=1), subtotal="500", total_cost="300")
-    _seed_quote(db_session, quote_id="day-2", confirmed_at=previous_day, subtotal="800", total_cost="400")
+    _seed_quote(db_session, quote_id="day-1a", confirmed_at=current_day.astimezone(UTC), subtotal="1000", total_cost="600")
+    _seed_quote(db_session, quote_id="day-1b", confirmed_at=(current_day + timedelta(hours=1)).astimezone(UTC), subtotal="500", total_cost="300")
+    _seed_quote(db_session, quote_id="day-2", confirmed_at=previous_day.astimezone(UTC), subtotal="800", total_cost="400")
     _seed_quote(
         db_session,
         quote_id="day-yoy",
-        confirmed_at=current_day.replace(year=current_day.year - 1),
+        confirmed_at=current_day.replace(year=current_day.year - 1).astimezone(UTC),
         subtotal="900",
         total_cost="450",
     )
@@ -130,9 +135,9 @@ def test_quarter_week_groups_by_week_start(db_session: Session):
     current_week = current_week - timedelta(days=current_week.weekday())
     previous_week = current_week - timedelta(days=7)
 
-    _seed_quote(db_session, quote_id="week-1a", confirmed_at=current_week + timedelta(days=1), subtotal="700", total_cost="350")
-    _seed_quote(db_session, quote_id="week-1b", confirmed_at=current_week + timedelta(days=2), subtotal="300", total_cost="150")
-    _seed_quote(db_session, quote_id="week-2", confirmed_at=previous_week + timedelta(days=3), subtotal="400", total_cost="200")
+    _seed_quote(db_session, quote_id="week-1a", confirmed_at=(current_week + timedelta(days=1)).astimezone(UTC), subtotal="700", total_cost="350")
+    _seed_quote(db_session, quote_id="week-1b", confirmed_at=(current_week + timedelta(days=2)).astimezone(UTC), subtotal="300", total_cost="150")
+    _seed_quote(db_session, quote_id="week-2", confirmed_at=(previous_week + timedelta(days=3)).astimezone(UTC), subtotal="400", total_cost="200")
     db_session.commit()
 
     result = get_trend_data(db_session, granularity="quarter_week", limit=12, before=None)
@@ -145,15 +150,15 @@ def test_quarter_week_groups_by_week_start(db_session: Session):
 
 def test_year_month_groups_by_month(db_session: Session):
     now = datetime.now(UTC)
-    year_start = _start_of_year(now)
     current_month = datetime(now.year, now.month, 1, tzinfo=UTC)
-    previous_month = datetime(now.year, max(1, now.month - 1), 1, tzinfo=UTC)
+    current_month = datetime(current_month.year, current_month.month, 1, tzinfo=TAIPEI)
+    previous_month = datetime(current_month.year, max(1, current_month.month - 1), 1, tzinfo=TAIPEI)
     if now.month == 1:
-        previous_month = year_start
+        previous_month = _start_of_year(now)
 
-    _seed_quote(db_session, quote_id="month-1a", confirmed_at=current_month + timedelta(days=3), subtotal="1200", total_cost="700")
-    _seed_quote(db_session, quote_id="month-1b", confirmed_at=current_month + timedelta(days=4), subtotal="800", total_cost="500")
-    _seed_quote(db_session, quote_id="month-2", confirmed_at=previous_month + timedelta(days=2), subtotal="1000", total_cost="650")
+    _seed_quote(db_session, quote_id="month-1a", confirmed_at=(current_month + timedelta(days=3)).astimezone(UTC), subtotal="1200", total_cost="700")
+    _seed_quote(db_session, quote_id="month-1b", confirmed_at=(current_month + timedelta(days=4)).astimezone(UTC), subtotal="800", total_cost="500")
+    _seed_quote(db_session, quote_id="month-2", confirmed_at=(previous_month + timedelta(days=2)).astimezone(UTC), subtotal="1000", total_cost="650")
     db_session.commit()
 
     result = get_trend_data(db_session, granularity="year_month", limit=12, before=None)
@@ -169,11 +174,11 @@ def test_closed_quotes_are_included_but_discarded_quotes_are_excluded(db_session
     now = datetime.now(UTC)
     month_start = _start_of_month(now)
 
-    _seed_quote(db_session, quote_id="closed-keep", confirmed_at=month_start + timedelta(days=5), subtotal="1500", total_cost="900", status="closed")
+    _seed_quote(db_session, quote_id="closed-keep", confirmed_at=(month_start + timedelta(days=5)).astimezone(UTC), subtotal="1500", total_cost="900", status="closed")
     _seed_quote(
         db_session,
         quote_id="discarded-ignore",
-        confirmed_at=month_start + timedelta(days=6),
+        confirmed_at=(month_start + timedelta(days=6)).astimezone(UTC),
         subtotal="999",
         total_cost="100",
         status="discarded",
@@ -191,7 +196,7 @@ def test_month_day_pagination_with_before(db_session: Session):
     month_start = _start_of_month(now)
 
     for offset in range(14):
-        confirmed_at = month_start + timedelta(days=offset)
+        confirmed_at = (month_start + timedelta(days=offset)).astimezone(UTC)
         _seed_quote(
             db_session,
             quote_id=f"page-{offset}",
@@ -214,3 +219,35 @@ def test_month_day_pagination_with_before(db_session: Session):
     )
     assert len(page2["data"]) == 2
     assert page2["has_more"] is False
+
+
+def test_month_day_uses_taipei_timezone_for_bucket_cutoff(db_session: Session):
+    # 2026-03-24 16:30 UTC == 2026-03-25 00:30 Asia/Taipei
+    _seed_quote(
+        db_session,
+        quote_id="taipei-cutoff",
+        confirmed_at=datetime(2026, 3, 24, 16, 30, tzinfo=UTC),
+        subtotal="600",
+        total_cost="300",
+    )
+    db_session.commit()
+
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+
+    labels = [row["label"] for row in result["data"]]
+    assert "03/25" in labels
+
+
+def test_month_day_earliest_confirmed_at_is_taipei_bucket_start_in_utc(db_session: Session):
+    _seed_quote(
+        db_session,
+        quote_id="bucket-edge",
+        confirmed_at=datetime(2026, 3, 24, 16, 30, tzinfo=UTC),
+        subtotal="100",
+        total_cost="50",
+    )
+    db_session.commit()
+
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+
+    assert result["earliest_confirmed_at"] == datetime(2026, 3, 24, 16, 0, tzinfo=UTC)

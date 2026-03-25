@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ TrendGranularity = Literal["month_day", "quarter_week", "year_month"]
 PERCENT_ZERO = Decimal("0.00")
 PERCENT_Q = Decimal("0.01")
 UTC = timezone.utc
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 @dataclass(frozen=True)
@@ -43,39 +45,51 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _start_of_month(value: datetime) -> datetime:
-    value = _as_utc(value)
-    return datetime(value.year, value.month, 1, tzinfo=UTC)
+def _to_taipei(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC).astimezone(TAIPEI)
+    return value.astimezone(TAIPEI)
 
 
-def _start_of_next_month(value: datetime) -> datetime:
-    month_start = _start_of_month(value)
+def _to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=TAIPEI).astimezone(UTC)
+    return value.astimezone(UTC)
+
+
+def _start_of_month_local(value: datetime) -> datetime:
+    value = _to_taipei(value)
+    return datetime(value.year, value.month, 1, tzinfo=TAIPEI)
+
+
+def _start_of_next_month_local(value: datetime) -> datetime:
+    month_start = _start_of_month_local(value)
     if month_start.month == 12:
-        return datetime(month_start.year + 1, 1, 1, tzinfo=UTC)
-    return datetime(month_start.year, month_start.month + 1, 1, tzinfo=UTC)
+        return datetime(month_start.year + 1, 1, 1, tzinfo=TAIPEI)
+    return datetime(month_start.year, month_start.month + 1, 1, tzinfo=TAIPEI)
 
 
-def _start_of_quarter(value: datetime) -> datetime:
-    value = _as_utc(value)
+def _start_of_quarter_local(value: datetime) -> datetime:
+    value = _to_taipei(value)
     quarter_month = ((value.month - 1) // 3) * 3 + 1
-    return datetime(value.year, quarter_month, 1, tzinfo=UTC)
+    return datetime(value.year, quarter_month, 1, tzinfo=TAIPEI)
 
 
-def _start_of_next_quarter(value: datetime) -> datetime:
-    quarter_start = _start_of_quarter(value)
+def _start_of_next_quarter_local(value: datetime) -> datetime:
+    quarter_start = _start_of_quarter_local(value)
     if quarter_start.month == 10:
-        return datetime(quarter_start.year + 1, 1, 1, tzinfo=UTC)
-    return datetime(quarter_start.year, quarter_start.month + 3, 1, tzinfo=UTC)
+        return datetime(quarter_start.year + 1, 1, 1, tzinfo=TAIPEI)
+    return datetime(quarter_start.year, quarter_start.month + 3, 1, tzinfo=TAIPEI)
 
 
-def _start_of_year(value: datetime) -> datetime:
-    value = _as_utc(value)
-    return datetime(value.year, 1, 1, tzinfo=UTC)
+def _start_of_year_local(value: datetime) -> datetime:
+    value = _to_taipei(value)
+    return datetime(value.year, 1, 1, tzinfo=TAIPEI)
 
 
-def _start_of_next_year(value: datetime) -> datetime:
-    year_start = _start_of_year(value)
-    return datetime(year_start.year + 1, 1, 1, tzinfo=UTC)
+def _start_of_next_year_local(value: datetime) -> datetime:
+    year_start = _start_of_year_local(value)
+    return datetime(year_start.year + 1, 1, 1, tzinfo=TAIPEI)
 
 
 def _shift_year(value: datetime, years: int) -> datetime:
@@ -89,25 +103,25 @@ def _shift_month(value: datetime, months: int) -> datetime:
     month_index = (value.month - 1) + months
     year = value.year + month_index // 12
     month = month_index % 12 + 1
-    return datetime(year, month, 1, tzinfo=UTC)
+    return datetime(year, month, 1, tzinfo=value.tzinfo or TAIPEI)
 
 
-def _bucket_start(value: datetime, granularity: TrendGranularity) -> datetime:
-    value = _as_utc(value)
+def _bucket_start_local(value: datetime, granularity: TrendGranularity) -> datetime:
+    value = _to_taipei(value)
     if granularity == "month_day":
-        return datetime(value.year, value.month, value.day, tzinfo=UTC)
+        return datetime(value.year, value.month, value.day, tzinfo=TAIPEI)
     if granularity == "quarter_week":
         monday = value - timedelta(days=value.weekday())
-        return datetime(monday.year, monday.month, monday.day, tzinfo=UTC)
-    return datetime(value.year, value.month, 1, tzinfo=UTC)
+        return datetime(monday.year, monday.month, monday.day, tzinfo=TAIPEI)
+    return datetime(value.year, value.month, 1, tzinfo=TAIPEI)
 
 
-def _format_label(bucket_start: datetime, granularity: TrendGranularity) -> str:
+def _format_label(bucket_start_local: datetime, granularity: TrendGranularity) -> str:
     if granularity == "month_day":
-        return bucket_start.strftime("%m/%d")
+        return bucket_start_local.strftime("%m/%d")
     if granularity == "quarter_week":
-        return f"{bucket_start.strftime('%m/%d')} 週"
-    return bucket_start.strftime("%Y-%m")
+        return f"{bucket_start_local.strftime('%m/%d')} 週"
+    return bucket_start_local.strftime("%Y-%m")
 
 
 def _period_margin(revenue: Decimal, cost: Decimal) -> Decimal:
@@ -138,21 +152,21 @@ def _yoy_bucket_start(bucket_start: datetime, granularity: TrendGranularity) -> 
     return _shift_year(bucket_start, -1)
 
 
-def _period_bounds(now: datetime, granularity: TrendGranularity) -> tuple[datetime, datetime, datetime, datetime]:
+def _period_bounds_local(now: datetime, granularity: TrendGranularity) -> tuple[datetime, datetime, datetime, datetime]:
     if granularity == "month_day":
-        current_start = _start_of_month(now)
-        current_end = _start_of_next_month(now)
+        current_start = _start_of_month_local(now)
+        current_end = _start_of_next_month_local(now)
         comparison_start = _shift_year(current_start, -1)
         comparison_end = _shift_year(current_end, -1)
         return current_start, current_end, comparison_start, comparison_end
     if granularity == "quarter_week":
-        current_start = _start_of_quarter(now)
-        current_end = _start_of_next_quarter(now)
+        current_start = _start_of_quarter_local(now)
+        current_end = _start_of_next_quarter_local(now)
         comparison_start = _shift_year(current_start, -1)
         comparison_end = _shift_year(current_end, -1)
         return current_start, current_end, comparison_start, comparison_end
-    current_start = _start_of_year(now)
-    current_end = _start_of_next_year(now)
+    current_start = _start_of_year_local(now)
+    current_end = _start_of_next_year_local(now)
     comparison_start = _shift_year(current_start, -1)
     comparison_end = _shift_year(current_end, -1)
     return current_start, current_end, comparison_start, comparison_end
@@ -164,20 +178,20 @@ def _aggregate_quotes(quotes: list[Quote], granularity: TrendGranularity) -> dic
         confirmed_at = getattr(quote, "confirmed_at", None)
         if confirmed_at is None:
             continue
-        bucket_start = _bucket_start(confirmed_at, granularity)
-        entry = buckets.setdefault(bucket_start, {"revenue": Decimal("0"), "cost": Decimal("0")})
+        bucket_start_local = _bucket_start_local(confirmed_at, granularity)
+        entry = buckets.setdefault(bucket_start_local, {"revenue": Decimal("0"), "cost": Decimal("0")})
         entry["revenue"] += _to_decimal(getattr(quote, "subtotal", 0))
         entry["cost"] += _to_decimal(getattr(quote, "total_cost", 0))
 
     return {
-        bucket_start: PeriodAggregate(
-            key=bucket_start.isoformat(),
-            bucket_start=bucket_start,
-            label=_format_label(bucket_start, granularity),
+        bucket_start_local: PeriodAggregate(
+            key=bucket_start_local.isoformat(),
+            bucket_start=bucket_start_local,
+            label=_format_label(bucket_start_local, granularity),
             revenue=_q2(values["revenue"]),
             cost=_q2(values["cost"]),
         )
-        for bucket_start, values in buckets.items()
+        for bucket_start_local, values in buckets.items()
     }
 
 
@@ -191,7 +205,11 @@ def get_trend_data(
     safe_limit = max(1, min(limit, 12))
     safe_before = _as_utc(before) if before is not None else None
     now = datetime.now(UTC)
-    current_start, current_end, comparison_start, comparison_end = _period_bounds(now, granularity)
+    current_start_local, current_end_local, comparison_start_local, comparison_end_local = _period_bounds_local(now, granularity)
+    current_start = _to_utc(current_start_local)
+    current_end = _to_utc(current_end_local)
+    comparison_start = _to_utc(comparison_start_local)
+    comparison_end = _to_utc(comparison_end_local)
 
     base_query = db.query(Quote).filter(
         Quote.confirmed_at.is_not(None),
@@ -239,7 +257,7 @@ def get_trend_data(
         }
         data.append(point)
 
-    earliest_confirmed_at = current_page[-1].bucket_start if current_page else None
+    earliest_confirmed_at = _to_utc(current_page[-1].bucket_start) if current_page else None
 
     return {
         "granularity": granularity,
