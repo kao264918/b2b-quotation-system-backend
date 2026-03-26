@@ -178,7 +178,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition", "X-Request-Id"],
+    expose_headers=["Content-Disposition", "X-Request-Id", "X-Response-Time"],
 )
 
 # Observability Middleware (order matters: RequestId runs first, then Logging)

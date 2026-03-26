@@ -2,11 +2,12 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, List, Literal, Optional
 
-from sqlalchemy import asc, case, desc, func
-from sqlalchemy.orm import Session
+from sqlalchemy import asc, case, desc, func, or_
+from sqlalchemy.orm import Session, joinedload, load_only, noload
 
 from app.crud.base import CRUDBase
 from app.models.catalog import CatalogItem
+from app.models.customer import Customer
 from app.models.promotion import Promotion
 from app.models.quote import Quote, QuoteItem
 from app.models.audit_log import AuditLog
@@ -78,6 +79,26 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         "gross_profit_amount": Quote.gross_profit_amount,
         "gross_profit_rate": Quote.gross_profit_rate,
     }
+    LIST_LOAD_COLUMNS = (
+        Quote.id,
+        Quote.quote_number,
+        Quote.customer_id,
+        Quote.title,
+        Quote.status,
+        Quote.accounting_status,
+        Quote.version,
+        Quote.subtotal,
+        Quote.promotion_discount_amount,
+        Quote.tax_total,
+        Quote.total,
+        Quote.cost_status,
+        Quote.total_cost,
+        Quote.gross_profit_amount,
+        Quote.gross_profit_rate,
+        Quote.valid_until,
+        Quote.created_at,
+        Quote.updated_at,
+    )
 
     def create(self, db: Session, *, obj_in: QuoteCreate) -> Quote:
         obj_data = obj_in.model_dump()
@@ -165,6 +186,69 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
 
     def count_multi(self, db: Session) -> int:
         return db.query(func.count(self.model.id)).scalar() or 0
+
+    def _apply_list_filters(self, query, search: Optional[str] = None):
+        if search:
+            search_term = f"%{search.strip()}%"
+            if search_term != "%%":
+                query = query.filter(
+                    or_(
+                        Quote.quote_number.ilike(search_term),
+                        Quote.title.ilike(search_term),
+                        Customer.company_name.ilike(search_term),
+                    )
+                )
+        return query
+
+    def get_list_page(
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        search: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Literal["asc", "desc"] = "desc",
+    ) -> List[Quote]:
+        query = (
+            db.query(self.model)
+            .join(Customer, Quote.customer_id == Customer.id)
+            .options(
+                load_only(*self.LIST_LOAD_COLUMNS),
+                joinedload(Quote.customer).load_only(
+                    Customer.id,
+                    Customer.company_name,
+                    Customer.tax_id,
+                    Customer.company_email,
+                    Customer.contact_name,
+                    Customer.contact_phone,
+                    Customer.contact_email,
+                ),
+                noload(Quote.items),
+                noload(Quote.promotion),
+                noload(Quote.rfq),
+            )
+        )
+        query = self._apply_list_filters(query, search)
+
+        sort_key = sort_by if sort_by in self.SORTABLE_FIELDS else "created_at"
+        sort_column = self.SORTABLE_FIELDS[sort_key]
+        order_fn = asc if sort_order == "asc" else desc
+
+        if sort_key in {"total_cost", "gross_profit_amount", "gross_profit_rate"}:
+            query = query.order_by(
+                case((Quote.cost_status == "missing", 1), else_=0).asc(),
+                order_fn(sort_column),
+            )
+        else:
+            query = query.order_by(order_fn(sort_column))
+
+        return query.offset(skip).limit(limit).all()
+
+    def count_list(self, db: Session, *, search: Optional[str] = None) -> int:
+        query = db.query(func.count(self.model.id)).join(Customer, Quote.customer_id == Customer.id)
+        query = self._apply_list_filters(query, search)
+        return query.scalar() or 0
     
     def update_status(self, db: Session, *, quote: Quote, new_status: str) -> Quote:
         """Update quotation status with transition validation."""
