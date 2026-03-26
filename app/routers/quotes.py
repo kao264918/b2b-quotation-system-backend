@@ -1,5 +1,6 @@
 from typing import Any, List, Literal
 import io
+import math
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -75,7 +76,7 @@ def _serialize_quote_for_user(quote: Any, current_user: User) -> dict:
     return data
 
 
-@router.get("", response_model=List[schemas.Quote])
+@router.get("", response_model=schemas.QuoteListResponse)
 def read_quotes(
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -91,7 +92,16 @@ def read_quotes(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    return [_serialize_quote_for_user(quote, current_user) for quote in quotes]
+    total = crud.quote.count_multi(db)
+    page = (skip // limit) + 1 if limit > 0 else 1
+    total_pages = math.ceil(total / limit) if limit > 0 and total > 0 else 1
+    return schemas.QuoteListResponse(
+        items=[_serialize_quote_for_user(quote, current_user) for quote in quotes],
+        total=total,
+        page=page,
+        page_size=limit,
+        total_pages=total_pages,
+    )
 
 
 @router.post("", response_model=schemas.Quote)

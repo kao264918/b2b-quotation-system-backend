@@ -162,6 +162,9 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             query = query.order_by(order_fn(sort_column))
 
         return query.offset(skip).limit(limit).all()
+
+    def count_multi(self, db: Session) -> int:
+        return db.query(func.count(self.model.id)).scalar() or 0
     
     def update_status(self, db: Session, *, quote: Quote, new_status: str) -> Quote:
         """Update quotation status with transition validation."""
