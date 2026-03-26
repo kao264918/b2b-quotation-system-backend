@@ -20,6 +20,17 @@ TAX_RATES = {
 }
 
 
+def requires_area_pricing(item_type: Optional[str], unit: Optional[str]) -> bool:
+    """
+    Determine whether an item should use area-based pricing.
+
+    Business rule must stay aligned with frontend:
+    - output type always requires area pricing
+    - any item with unit "材" also requires area pricing
+    """
+    return item_type == "output" or unit == "材"
+
+
 def calculate_area_unit(length_cm: Optional[Decimal], width_cm: Optional[Decimal]) -> Decimal:
     """
     Calculate area unit for output type items.
@@ -79,9 +90,8 @@ def calculate_item_totals(
     for item in items:
         unit_price = Decimal(str(item.get("unit_price", 0)))
         quantity = Decimal(str(item.get("quantity", 0)))
-        
-        # Calculate area unit for output type
-        if item.get("item_type") == "output":
+
+        if requires_area_pricing(item.get("item_type"), item.get("unit")):
             length_cm = Decimal(str(item.get("length_cm", 0))) if item.get("length_cm") else None
             width_cm = Decimal(str(item.get("width_cm", 0))) if item.get("width_cm") else None
             area_unit = calculate_area_unit(length_cm, width_cm)
@@ -121,8 +131,7 @@ def recalculate_rfq_item(item_data: Dict[str, Any]) -> Dict[str, Any]:
     unit_price = Decimal(str(item_data.get("unit_price", 0)))
     quantity = Decimal(str(item_data.get("quantity", 0)))
     
-    # Calculate area unit
-    if item_type == "output":
+    if requires_area_pricing(item_type, item_data.get("unit")):
         length_cm = Decimal(str(item_data.get("length_cm", 0))) if item_data.get("length_cm") else None
         width_cm = Decimal(str(item_data.get("width_cm", 0))) if item_data.get("width_cm") else None
         area_unit = calculate_area_unit(length_cm, width_cm)
