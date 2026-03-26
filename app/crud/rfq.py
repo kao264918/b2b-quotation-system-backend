@@ -156,6 +156,67 @@ def get_rfqs(
     return query.order_by(desc(RFQ.updated_at)).offset(skip).limit(limit).all()
 
 
+def get_rfq_list_rows(
+    db: Session,
+    *,
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    status: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get RFQ list rows with vendor and current-version totals in one query."""
+    query = (
+        db.query(
+            RFQ.id.label("id"),
+            RFQ.rfq_no.label("rfq_no"),
+            RFQ.project_name.label("project_name"),
+            Customer.company_name.label("vendor_name"),
+            RFQ.status.label("status"),
+            RFQ.accounting_status.label("accounting_status"),
+            RFQVersion.subtotal.label("subtotal"),
+            RFQVersion.total_amount.label("total_amount"),
+            RFQ.created_at.label("created_at"),
+            RFQ.updated_at.label("updated_at"),
+        )
+        .join(Customer, RFQ.vendor_id == Customer.id)
+        .outerjoin(RFQVersion, RFQ.current_version_id == RFQVersion.id)
+        .filter(RFQ.deleted_at.is_(None))
+    )
+
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            (RFQ.rfq_no.ilike(search_term)) |
+            (RFQ.project_name.ilike(search_term))
+        )
+
+    if status:
+        query = query.filter(RFQ.status == status)
+
+    rows = (
+        query.order_by(desc(RFQ.updated_at))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": row.id,
+            "rfq_no": row.rfq_no,
+            "project_name": row.project_name,
+            "vendor_name": row.vendor_name or "Unknown",
+            "status": row.status,
+            "accounting_status": row.accounting_status,
+            "subtotal": row.subtotal or 0,
+            "total_amount": row.total_amount or 0,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in rows
+    ]
+
+
 def count_rfqs(
     db: Session,
     *,

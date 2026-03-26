@@ -28,6 +28,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         duration_ms = (time.perf_counter() - start_time) * 1000
+        query_string = request.url.query or None
         
         logger.info(
             f"{request.method} {request.url.path} -> {response.status_code}",
@@ -35,6 +36,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "extra_fields": {
                     "method": request.method,
                     "path": request.url.path,
+                    "query_string": query_string,
                     "status_code": response.status_code,
                     "duration_ms": round(duration_ms, 2),
                     "request_id": get_request_id(),
