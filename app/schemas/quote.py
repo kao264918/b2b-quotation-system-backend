@@ -162,3 +162,11 @@ class QuoteInternalKPI(BaseModel):
     total_revenue_excl_tax: Decimal
     total_cost: Decimal
     average_gross_profit_rate: Decimal
+
+
+class QuoteListResponse(BaseModel):
+    items: List[Quote]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

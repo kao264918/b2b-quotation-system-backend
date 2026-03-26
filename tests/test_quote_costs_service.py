@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.services.quote_costs import (
+    calculate_quote_revenue_excl_tax,
     calculate_gross_profit_amount,
     calculate_gross_profit_rate,
     calculate_total_cost,
@@ -32,8 +33,9 @@ class _FakeItem:
 
 
 class _FakeQuote:
-    def __init__(self, subtotal: str, items: list[_FakeItem]):
+    def __init__(self, subtotal: str, items: list[_FakeItem], *, promotion_discount_amount: str = "0.00"):
         self.subtotal = Decimal(subtotal)
+        self.promotion_discount_amount = Decimal(promotion_discount_amount)
         self.items = items
         self.total_cost = Decimal("0")
         self.gross_profit_amount = Decimal("0")
@@ -85,6 +87,11 @@ def test_calculate_gross_profit_rate_zero_revenue() -> None:
     assert calculate_gross_profit_rate(Decimal("0"), Decimal("10")) == Decimal("0.00")
 
 
+def test_calculate_quote_revenue_excl_tax_deducts_promotion_discount() -> None:
+    quote = _FakeQuote(subtotal="1000.00", items=[], promotion_discount_amount="150.00")
+    assert calculate_quote_revenue_excl_tax(quote) == Decimal("850.00")
+
+
 def test_identify_missing_cost_item_ids() -> None:
     items = [
         _FakeItem("a", "1", None),
@@ -105,3 +112,15 @@ def test_recalculate_quote_cost_fields_sets_missing_status() -> None:
     assert quote.gross_profit_amount == Decimal("80.00")
     assert quote.gross_profit_rate == Decimal("40.00")
     assert quote.cost_status == "missing"
+
+
+def test_recalculate_quote_cost_fields_uses_discounted_revenue_for_gross_profit() -> None:
+    quote = _FakeQuote(
+        subtotal="1000.00",
+        items=[_FakeItem("a", "2", "200.00")],
+        promotion_discount_amount="100.00",
+    )
+    recalculate_quote_cost_fields(quote)
+    assert quote.total_cost == Decimal("400.00")
+    assert quote.gross_profit_amount == Decimal("500.00")
+    assert quote.gross_profit_rate == Decimal("55.56")

@@ -95,11 +95,18 @@ def identify_missing_cost_item_ids(items: Iterable[object]) -> list[str]:
     return missing_ids
 
 
+def calculate_quote_revenue_excl_tax(quote: object) -> Decimal:
+    subtotal = Decimal(getattr(quote, "subtotal", ZERO) or ZERO)
+    promotion_discount_amount = Decimal(getattr(quote, "promotion_discount_amount", ZERO) or ZERO)
+    return quantize_money(max(ZERO, subtotal - promotion_discount_amount))
+
+
 def recalculate_quote_cost_fields(quote: object) -> None:
     items = list(getattr(quote, "items", []) or [])
+    revenue_excl_tax = calculate_quote_revenue_excl_tax(quote)
     total_cost = calculate_total_cost(items)
-    gross_profit_amount = calculate_gross_profit_amount(getattr(quote, "subtotal", ZERO), total_cost)
-    gross_profit_rate = calculate_gross_profit_rate(getattr(quote, "subtotal", ZERO), gross_profit_amount)
+    gross_profit_amount = calculate_gross_profit_amount(revenue_excl_tax, total_cost)
+    gross_profit_rate = calculate_gross_profit_rate(revenue_excl_tax, gross_profit_amount)
     missing_item_ids = identify_missing_cost_item_ids(items)
 
     setattr(quote, "total_cost", total_cost)

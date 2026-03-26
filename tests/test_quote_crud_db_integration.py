@@ -251,6 +251,39 @@ def test_revert_keeps_quote_editable_when_live_promotion_is_no_longer_valid(db_s
     assert reverted.total == Decimal("1050.00")
 
 
+def test_create_quote_with_promotion_recalculates_gross_profit_from_discounted_revenue(db_session: Session):
+    _seed_customer(db_session)
+    _seed_rfq(db_session)
+    _seed_catalog_item(db_session, "catalog-1", "ITEM-001", Decimal("200.00"))
+
+    promotion = Promotion(
+        id="promo-1",
+        promotion_code="PROMO-2603-010",
+        promotion_name="Spring Promo",
+        type="percentage",
+        discount_value=Decimal("10.00"),
+        minimum_order_amount=Decimal("0.00"),
+        scope="all_products",
+        scope_category=None,
+        start_at=datetime.now(timezone.utc) - timedelta(days=1),
+        end_at=datetime.now(timezone.utc) + timedelta(days=7),
+        is_active=True,
+    )
+    db_session.add(promotion)
+    db_session.commit()
+
+    quote_in = _build_quote_create("customer-1", "rfq-1", "catalog-1")
+    quote_in.promotion_id = promotion.id
+
+    created = quote_crud.create(db_session, obj_in=quote_in)
+
+    assert created.subtotal == Decimal("1000.00")
+    assert created.promotion_discount_amount == Decimal("100.00")
+    assert created.total_cost == Decimal("400.00")
+    assert created.gross_profit_amount == Decimal("500.00")
+    assert created.gross_profit_rate == Decimal("55.56")
+
+
 def test_get_multi_sorting_puts_missing_cost_last(db_session: Session):
     _seed_customer(db_session)
     _seed_rfq(db_session)

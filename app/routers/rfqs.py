@@ -86,32 +86,11 @@ def list_rfqs(
     """List RFQs with pagination and search."""
     skip = (page - 1) * page_size
     
-    rfqs = rfq_crud.get_rfqs(db, skip=skip, limit=page_size, search=search, status=status)
+    rfqs = rfq_crud.get_rfq_list_rows(db, skip=skip, limit=page_size, search=search, status=status)
     total = rfq_crud.count_rfqs(db, search=search, status=status)
     total_pages = math.ceil(total / page_size) if total > 0 else 1
     
-    # Map to list response
-    items = []
-    for rfq in rfqs:
-        # Get current version totals
-        current_version = None
-        for v in rfq.versions:
-            if v.id == rfq.current_version_id:
-                current_version = v
-                break
-        
-        items.append(RFQListItemResponse(
-            id=rfq.id,
-            rfq_no=rfq.rfq_no,
-            project_name=rfq.project_name,
-            vendor_name=rfq.vendor.company_name if rfq.vendor else "Unknown",
-            status=rfq.status,
-            accounting_status=rfq.accounting_status,
-            subtotal=current_version.subtotal if current_version else 0,
-            total_amount=current_version.total_amount if current_version else 0,
-            created_at=rfq.created_at,
-            updated_at=rfq.updated_at,
-        ))
+    items = [RFQListItemResponse(**rfq) for rfq in rfqs]
     
     return RFQListResponse(
         items=items,
