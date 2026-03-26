@@ -1,6 +1,6 @@
 """add list performance indexes
 
-Revision ID: 20260326_add_list_performance_indexes
+Revision ID: 260326_perf_idx
 Revises: a1f8d7c9e2b3
 Create Date: 2026-03-26 15:30:00.000000
 """
@@ -9,7 +9,7 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision = "20260326_add_list_performance_indexes"
+revision = "260326_perf_idx"
 down_revision = "a1f8d7c9e2b3"
 branch_labels = None
 depends_on = None

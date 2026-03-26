@@ -1,7 +1,7 @@
 """merge quote promotion and performance index heads
 
-Revision ID: 20260326_merge_quote_promotion_and_perf_heads
-Revises: b260313promo, 20260326_add_list_performance_indexes
+Revision ID: 260326_merge_heads
+Revises: b260313promo, 260326_perf_idx
 Create Date: 2026-03-26 16:20:00.000000
 """
 
@@ -10,10 +10,10 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "20260326_merge_quote_promotion_and_perf_heads"
+revision: str = "260326_merge_heads"
 down_revision: Union[str, Sequence[str], None] = (
     "b260313promo",
-    "20260326_add_list_performance_indexes",
+    "260326_perf_idx",
 )
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
