@@ -26,6 +26,7 @@ from app.schemas.rfq import (
 )
 from app.crud import rfq as rfq_crud
 from app.services import export_service
+from app.services.rfq_calculation import requires_area_pricing
 from fastapi.responses import StreamingResponse
 
 router = APIRouter()
@@ -33,26 +34,20 @@ router = APIRouter()
 
 def validate_output_dims(items) -> list[dict]:
     """
-    Validate that output-type items have both length_cm and width_cm.
+    Validate that area-priced items have both length_cm and width_cm.
     Returns list of field-level errors for frontend bottom message mapping.
     """
     errors = []
     for idx, item in enumerate(items):
         item_dict = item.model_dump() if hasattr(item, 'model_dump') else item
-        if item_dict.get('item_type') == 'output':
-            # Check length/width presence (allow 0 if specific use case, but usually must be > 0. prompt says "missing", so falsy check is usually ok but 0 dim is weird)
-            # Pydantic schema allows 0 (ge=0).
-            # Requirement says "Missing".
-            # If 0 is valid, we should check for None. But usually dims cannot be 0.
-            # Let's check for None first. if 0 is passed, it is truthy False.
-            # Assuming dims > 0 is required.
+        if requires_area_pricing(item_dict.get('item_type'), item_dict.get('unit')):
             l = item_dict.get('length_cm')
             w = item_dict.get('width_cm')
             if l is None or w is None or l == 0 or w == 0:
                 errors.append({
                     "field": f"items[{idx}].dimensions",
                     "item_id": item_dict.get('id'), # Return FE ID if provided
-                    "message": "輸出類型項目必須填寫長度與寬度",
+                    "message": "材積計價項目必須填寫長度與寬度",
                     "item_name": item_dict.get('name', f'Item {idx+1}')
                 })
     return errors
@@ -70,7 +65,7 @@ def create_rfq(
     if dim_errors:
         raise HTTPException(
             status_code=400, 
-            detail={"message": "輸出類型項目缺少尺寸資料", "errors": dim_errors}
+            detail={"message": "材積計價項目缺少尺寸資料", "errors": dim_errors}
         )
     
     try:
@@ -195,7 +190,7 @@ def update_rfq(
         if dim_errors:
             raise HTTPException(
                 status_code=400, 
-                detail={"message": "輸出類型項目缺少尺寸資料", "errors": dim_errors}
+                detail={"message": "材積計價項目缺少尺寸資料", "errors": dim_errors}
             )
     
     try:
