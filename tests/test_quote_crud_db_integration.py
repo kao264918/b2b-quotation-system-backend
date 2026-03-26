@@ -428,3 +428,28 @@ def test_internal_kpi_counts_confirmed_with_confirmed_at_range(db_session: Sessi
     assert all_kpi["count"] == 2
     assert all_kpi["total_revenue_excl_tax"] == Decimal("3000.00")
     assert all_kpi["total_cost"] == Decimal("1900.00")
+
+
+def test_get_list_page_supports_search_without_loading_items(db_session: Session):
+    customer = _seed_customer(db_session, "customer-search")
+    _seed_rfq(db_session, "rfq-search", customer.id)
+    _seed_catalog_item(db_session, "catalog-search", "ITEM-SEARCH", Decimal("30.00"))
+
+    quote_in = _build_quote_create(customer.id, "rfq-search", "catalog-search", Decimal("500.00"))
+    quote_in.title = "Searchable Quote"
+    created = quote_crud.create(db_session, obj_in=quote_in)
+    db_session.expunge_all()
+
+    results = quote_crud.get_list_page(
+        db_session,
+        skip=0,
+        limit=10,
+        search="ACME",
+        sort_by="created_at",
+        sort_order="desc",
+    )
+
+    assert len(results) == 1
+    assert results[0].id == created.id
+    assert results[0].customer.company_name == "ACME"
+    assert quote_crud.count_list(db_session, search="Searchable") == 1

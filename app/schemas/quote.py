@@ -156,6 +156,30 @@ class Quote(QuoteBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class QuoteListItem(BaseModel):
+    id: str
+    quote_number: str
+    customer_id: str
+    title: str
+    status: str
+    accounting_status: Optional[str] = None
+    version: int = 1
+    subtotal: Decimal
+    promotion_discount_amount: Decimal = Decimal("0.00")
+    tax_total: Decimal
+    total: Decimal
+    cost_status: str = "ok"
+    total_cost: Optional[Decimal] = None
+    gross_profit_amount: Optional[Decimal] = None
+    gross_profit_rate: Optional[Decimal] = None
+    valid_until: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    customer: Optional["QuoteCustomerSummary"] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class QuoteInternalKPI(BaseModel):
     range: Literal["month", "quarter", "all"]
     count: int
@@ -165,7 +189,7 @@ class QuoteInternalKPI(BaseModel):
 
 
 class QuoteListResponse(BaseModel):
-    items: List[Quote]
+    items: List[QuoteListItem]
     total: int
     page: int
     page_size: int
