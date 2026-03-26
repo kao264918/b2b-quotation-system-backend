@@ -124,3 +124,14 @@ def test_recalculate_quote_cost_fields_uses_discounted_revenue_for_gross_profit(
     assert quote.total_cost == Decimal("400.00")
     assert quote.gross_profit_amount == Decimal("500.00")
     assert quote.gross_profit_rate == Decimal("55.56")
+
+
+def test_recalculate_quote_cost_fields_keeps_negative_gross_profit_and_rate() -> None:
+    quote = _FakeQuote(
+        subtotal="300.00",
+        items=[_FakeItem("a", "2", "200.00")],
+    )
+    recalculate_quote_cost_fields(quote)
+    assert quote.total_cost == Decimal("400.00")
+    assert quote.gross_profit_amount == Decimal("-100.00")
+    assert quote.gross_profit_rate == Decimal("-33.33")
