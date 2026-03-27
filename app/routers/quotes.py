@@ -1,12 +1,14 @@
 from typing import Any, List, Literal
 import io
 import math
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
+from app.core.logging import get_logger
 from app.crud.quote import QuoteValidationError
 from app.database import get_db
 from app.deps.auth import get_current_user
@@ -14,6 +16,7 @@ from app.models.user import User
 from app.services.promotion_pricing import PromotionValidationError, get_promotion_runtime_status, validate_promotion_for_quote
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 def can_view_internal_cost(user: User) -> bool:
@@ -97,6 +100,9 @@ def read_quotes(
     sort_order: Literal["asc", "desc"] = "desc",
     current_user: User = Depends(get_current_user),
 ) -> Any:
+    total_start = time.perf_counter()
+
+    query_start = time.perf_counter()
     quotes = crud.quote.get_list_page(
         db,
         skip=skip,
@@ -105,11 +111,45 @@ def read_quotes(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    query_ms = round((time.perf_counter() - query_start) * 1000, 2)
+
+    count_start = time.perf_counter()
     total = crud.quote.count_list(db, search=search)
+    count_ms = round((time.perf_counter() - count_start) * 1000, 2)
+
     page = (skip // limit) + 1 if limit > 0 else 1
     total_pages = math.ceil(total / limit) if limit > 0 and total > 0 else 1
+
+    serialize_start = time.perf_counter()
+    items = [_serialize_quote_list_item_for_user(quote, current_user) for quote in quotes]
+    serialize_ms = round((time.perf_counter() - serialize_start) * 1000, 2)
+    total_ms = round((time.perf_counter() - total_start) * 1000, 2)
+
+    logger.info(
+        "GET /api/v1/quotes status=200 duration_ms=%s query_ms=%s count_ms=%s serialize_ms=%s",
+        total_ms,
+        query_ms,
+        count_ms,
+        serialize_ms,
+        extra={
+            "extra_fields": {
+                "path": "/api/v1/quotes",
+                "skip": skip,
+                "limit": limit,
+                "search": search,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+                "result_count": len(items),
+                "duration_ms": total_ms,
+                "query_ms": query_ms,
+                "count_ms": count_ms,
+                "serialize_ms": serialize_ms,
+            }
+        },
+    )
+
     return schemas.QuoteListResponse(
-        items=[_serialize_quote_list_item_for_user(quote, current_user) for quote in quotes],
+        items=items,
         total=total,
         page=page,
         page_size=limit,
