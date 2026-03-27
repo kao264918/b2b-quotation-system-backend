@@ -150,17 +150,18 @@ def test_quote_list_passes_sorting_to_crud(client, monkeypatch):
 
     captured = {}
 
-    def _mock_get_multi(db, skip, limit, sort_by, sort_order):
+    def _mock_get_list_page(db, skip, limit, search, sort_by, sort_order):
         captured["skip"] = skip
         captured["limit"] = limit
+        captured["search"] = search
         captured["sort_by"] = sort_by
         captured["sort_order"] = sort_order
         return []
 
-    monkeypatch.setattr(quotes_router.crud.quote, "get_multi", _mock_get_multi)
-    monkeypatch.setattr(quotes_router.crud.quote, "count_multi", lambda db: 0)
+    monkeypatch.setattr(quotes_router.crud.quote, "get_list_page", _mock_get_list_page)
+    monkeypatch.setattr(quotes_router.crud.quote, "count_list", lambda db, search=None: 0)
 
-    response = client.get("/api/v1/quotes?skip=10&limit=20&sort_by=total_cost&sort_order=asc")
+    response = client.get("/api/v1/quotes?skip=10&limit=20&search=acme&sort_by=total_cost&sort_order=asc")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -173,6 +174,7 @@ def test_quote_list_passes_sorting_to_crud(client, monkeypatch):
     assert captured == {
         "skip": 10,
         "limit": 20,
+        "search": "acme",
         "sort_by": "total_cost",
         "sort_order": "asc",
     }
@@ -220,10 +222,10 @@ def test_quote_list_masks_internal_cost_fields_without_permission(client, monkey
     monkeypatch.setattr(quotes_router, "can_view_internal_cost", lambda user: False)
     monkeypatch.setattr(
         quotes_router.crud.quote,
-        "get_multi",
-        lambda db, skip=0, limit=100, sort_by=None, sort_order="desc": [_build_quote("ok")],
+        "get_list_page",
+        lambda db, skip=0, limit=100, search=None, sort_by=None, sort_order="desc": [_build_quote("ok")],
     )
-    monkeypatch.setattr(quotes_router.crud.quote, "count_multi", lambda db: 1)
+    monkeypatch.setattr(quotes_router.crud.quote, "count_list", lambda db, search=None: 1)
 
     response = client.get("/api/v1/quotes")
     assert response.status_code == 200
@@ -239,10 +241,10 @@ def test_quote_list_serializes_customer_summary_without_strict_customer_validati
 
     monkeypatch.setattr(
         quotes_router.crud.quote,
-        "get_multi",
-        lambda db, skip=0, limit=100, sort_by=None, sort_order="desc": [_build_quote_with_customer_snapshot()],
+        "get_list_page",
+        lambda db, skip=0, limit=100, search=None, sort_by=None, sort_order="desc": [_build_quote_with_customer_snapshot()],
     )
-    monkeypatch.setattr(quotes_router.crud.quote, "count_multi", lambda db: 1)
+    monkeypatch.setattr(quotes_router.crud.quote, "count_list", lambda db, search=None: 1)
 
     response = client.get("/api/v1/quotes")
 
@@ -250,3 +252,4 @@ def test_quote_list_serializes_customer_summary_without_strict_customer_validati
     payload = response.json()["items"]
     assert payload[0]["customer"]["company_name"] == "ACME Corp"
     assert payload[0]["customer"]["tax_id"] == "123"
+    assert "items" not in payload[0]

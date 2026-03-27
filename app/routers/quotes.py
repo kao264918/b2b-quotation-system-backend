@@ -20,6 +20,17 @@ def can_view_internal_cost(user: User) -> bool:
     return True
 
 
+def _serialize_quote_list_item_for_user(quote: Any, current_user: User) -> dict:
+    data = schemas.QuoteListItem.model_validate(quote).model_dump()
+    if can_view_internal_cost(current_user):
+        return data
+
+    data["total_cost"] = None
+    data["gross_profit_amount"] = None
+    data["gross_profit_rate"] = None
+    return data
+
+
 def _serialize_quote_for_user(quote: Any, current_user: User) -> dict:
     data = schemas.Quote.model_validate(quote).model_dump()
     if quote.status == "draft":
@@ -81,22 +92,24 @@ def read_quotes(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
+    search: str | None = None,
     sort_by: str | None = None,
     sort_order: Literal["asc", "desc"] = "desc",
     current_user: User = Depends(get_current_user),
 ) -> Any:
-    quotes = crud.quote.get_multi(
+    quotes = crud.quote.get_list_page(
         db,
         skip=skip,
         limit=limit,
+        search=search,
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    total = crud.quote.count_multi(db)
+    total = crud.quote.count_list(db, search=search)
     page = (skip // limit) + 1 if limit > 0 else 1
     total_pages = math.ceil(total / limit) if limit > 0 and total > 0 else 1
     return schemas.QuoteListResponse(
-        items=[_serialize_quote_for_user(quote, current_user) for quote in quotes],
+        items=[_serialize_quote_list_item_for_user(quote, current_user) for quote in quotes],
         total=total,
         page=page,
         page_size=limit,

@@ -26,19 +26,21 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         
         response = await call_next(request)
-        
+
         duration_ms = (time.perf_counter() - start_time) * 1000
         query_string = request.url.query or None
+        duration_ms_rounded = round(duration_ms, 2)
+        response.headers["X-Response-Time"] = f"{duration_ms_rounded}ms"
         
         logger.info(
-            f"{request.method} {request.url.path} -> {response.status_code}",
+            f"{request.method} {request.url.path} -> {response.status_code} duration_ms={duration_ms_rounded}",
             extra={
                 "extra_fields": {
                     "method": request.method,
                     "path": request.url.path,
                     "query_string": query_string,
                     "status_code": response.status_code,
-                    "duration_ms": round(duration_ms, 2),
+                    "duration_ms": duration_ms_rounded,
                     "request_id": get_request_id(),
                 }
             }
