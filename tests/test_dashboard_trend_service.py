@@ -114,7 +114,7 @@ def test_month_day_groups_by_day_and_sums_same_day_quotes(db_session: Session):
     )
     db_session.commit()
 
-    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None, anchor=None, auto_fallback=True)
 
     assert result["granularity"] == "month_day"
     assert [row["label"] for row in result["data"][:2]] == [
@@ -140,7 +140,7 @@ def test_quarter_week_groups_by_week_start(db_session: Session):
     _seed_quote(db_session, quote_id="week-2", confirmed_at=(previous_week + timedelta(days=3)).astimezone(UTC), subtotal="400", total_cost="200")
     db_session.commit()
 
-    result = get_trend_data(db_session, granularity="quarter_week", limit=12, before=None)
+    result = get_trend_data(db_session, granularity="quarter_week", limit=12, before=None, anchor=None, auto_fallback=True)
 
     assert result["granularity"] == "quarter_week"
     assert result["data"][0]["label"] == f"{current_week.strftime('%m/%d')} 週"
@@ -161,7 +161,7 @@ def test_year_month_groups_by_month(db_session: Session):
     _seed_quote(db_session, quote_id="month-2", confirmed_at=(previous_month + timedelta(days=2)).astimezone(UTC), subtotal="1000", total_cost="650")
     db_session.commit()
 
-    result = get_trend_data(db_session, granularity="year_month", limit=12, before=None)
+    result = get_trend_data(db_session, granularity="year_month", limit=12, before=None, anchor=None, auto_fallback=True)
 
     assert result["granularity"] == "year_month"
     assert result["data"][0]["label"] == current_month.strftime("%Y-%m")
@@ -185,7 +185,7 @@ def test_closed_quotes_are_included_but_discarded_quotes_are_excluded(db_session
     )
     db_session.commit()
 
-    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None, anchor=None, auto_fallback=True)
 
     assert result["data"][0]["revenue"] == Decimal("1500.00")
     assert result["data"][0]["cost"] == Decimal("900.00")
@@ -206,7 +206,7 @@ def test_month_day_pagination_with_before(db_session: Session):
         )
     db_session.commit()
 
-    page1 = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+    page1 = get_trend_data(db_session, granularity="month_day", limit=12, before=None, anchor=None, auto_fallback=True)
     assert len(page1["data"]) == 12
     assert page1["has_more"] is True
     assert page1["earliest_confirmed_at"] == month_start + timedelta(days=2)
@@ -216,6 +216,8 @@ def test_month_day_pagination_with_before(db_session: Session):
         granularity="month_day",
         limit=12,
         before=page1["earliest_confirmed_at"],
+        anchor=None,
+        auto_fallback=True,
     )
     assert len(page2["data"]) == 2
     assert page2["has_more"] is False
@@ -232,7 +234,7 @@ def test_month_day_uses_taipei_timezone_for_bucket_cutoff(db_session: Session):
     )
     db_session.commit()
 
-    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None, anchor=None, auto_fallback=True)
 
     labels = [row["label"] for row in result["data"]]
     assert "03/25" in labels
@@ -248,6 +250,149 @@ def test_month_day_earliest_confirmed_at_is_taipei_bucket_start_in_utc(db_sessio
     )
     db_session.commit()
 
-    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None)
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None, anchor=None, auto_fallback=True)
 
     assert result["earliest_confirmed_at"] == datetime(2026, 3, 24, 16, 0, tzinfo=UTC)
+
+
+def test_month_day_anchor_reads_target_month_instead_of_current_month(db_session: Session):
+    _seed_quote(
+        db_session,
+        quote_id="march-quote",
+        confirmed_at=datetime(2026, 3, 15, 8, 0, tzinfo=UTC),
+        subtotal="300",
+        total_cost="100",
+    )
+    _seed_quote(
+        db_session,
+        quote_id="april-quote",
+        confirmed_at=datetime(2026, 4, 10, 8, 0, tzinfo=UTC),
+        subtotal="500",
+        total_cost="200",
+    )
+    db_session.commit()
+
+    result = get_trend_data(
+        db_session,
+        granularity="month_day",
+        limit=12,
+        before=None,
+        anchor=datetime(2026, 3, 15, tzinfo=UTC),
+        auto_fallback=True,
+    )
+
+    assert result["resolved_period_start"] == datetime(2026, 2, 28, 16, 0, tzinfo=UTC)
+    assert result["resolved_period_end"] == datetime(2026, 3, 31, 16, 0, tzinfo=UTC)
+    assert [row["label"] for row in result["data"]] == ["03/15"]
+
+
+def test_quarter_week_anchor_reads_target_quarter_instead_of_current_quarter(db_session: Session):
+    _seed_quote(
+        db_session,
+        quote_id="q1-quote",
+        confirmed_at=datetime(2026, 3, 12, 8, 0, tzinfo=UTC),
+        subtotal="900",
+        total_cost="300",
+    )
+    _seed_quote(
+        db_session,
+        quote_id="q2-quote",
+        confirmed_at=datetime(2026, 4, 12, 8, 0, tzinfo=UTC),
+        subtotal="1200",
+        total_cost="600",
+    )
+    db_session.commit()
+
+    result = get_trend_data(
+        db_session,
+        granularity="quarter_week",
+        limit=12,
+        before=None,
+        anchor=datetime(2026, 3, 15, tzinfo=UTC),
+        auto_fallback=True,
+    )
+
+    assert result["resolved_period_start"] == datetime(2025, 12, 31, 16, 0, tzinfo=UTC)
+    assert result["resolved_period_end"] == datetime(2026, 3, 31, 16, 0, tzinfo=UTC)
+    assert all(row["label"].endswith("週") for row in result["data"])
+    assert all(not row["label"].startswith("04/") for row in result["data"])
+
+
+def test_year_month_anchor_reads_target_year(db_session: Session):
+    _seed_quote(
+        db_session,
+        quote_id="y2025-quote",
+        confirmed_at=datetime(2025, 8, 20, 8, 0, tzinfo=UTC),
+        subtotal="1100",
+        total_cost="500",
+    )
+    _seed_quote(
+        db_session,
+        quote_id="y2026-quote",
+        confirmed_at=datetime(2026, 1, 10, 8, 0, tzinfo=UTC),
+        subtotal="2100",
+        total_cost="1000",
+    )
+    db_session.commit()
+
+    result = get_trend_data(
+        db_session,
+        granularity="year_month",
+        limit=12,
+        before=None,
+        anchor=datetime(2025, 8, 20, tzinfo=UTC),
+        auto_fallback=True,
+    )
+
+    assert result["resolved_period_start"] == datetime(2024, 12, 31, 16, 0, tzinfo=UTC)
+    assert result["resolved_period_end"] == datetime(2025, 12, 31, 16, 0, tzinfo=UTC)
+    assert [row["label"] for row in result["data"]] == ["2025-08"]
+
+
+def test_auto_fallback_uses_latest_period_when_current_period_is_empty(db_session: Session, monkeypatch):
+    _seed_quote(
+        db_session,
+        quote_id="fallback-q1",
+        confirmed_at=datetime(2026, 3, 12, 8, 0, tzinfo=UTC),
+        subtotal="900",
+        total_cost="300",
+    )
+    db_session.commit()
+    monkeypatch.setattr("app.services.dashboard_trend._now_utc", lambda: datetime(2026, 4, 1, 0, 0, tzinfo=UTC))
+
+    result = get_trend_data(
+        db_session,
+        granularity="quarter_week",
+        limit=12,
+        before=None,
+        anchor=None,
+        auto_fallback=True,
+    )
+
+    assert result["used_fallback"] is True
+    assert result["resolved_period_start"] == datetime(2025, 12, 31, 16, 0, tzinfo=UTC)
+
+
+def test_auto_fallback_false_keeps_empty_current_period(db_session: Session, monkeypatch):
+    _seed_quote(
+        db_session,
+        quote_id="older-q1",
+        confirmed_at=datetime(2026, 3, 12, 8, 0, tzinfo=UTC),
+        subtotal="900",
+        total_cost="300",
+    )
+    db_session.commit()
+    monkeypatch.setattr("app.services.dashboard_trend._now_utc", lambda: datetime(2026, 4, 1, 0, 0, tzinfo=UTC))
+
+    result = get_trend_data(
+        db_session,
+        granularity="quarter_week",
+        limit=12,
+        before=None,
+        anchor=None,
+        auto_fallback=False,
+    )
+
+    assert result["used_fallback"] is False
+    assert result["data"] == []
+    assert result["resolved_period_start"] == datetime(2026, 3, 31, 16, 0, tzinfo=UTC)

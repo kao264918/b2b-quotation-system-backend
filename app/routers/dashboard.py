@@ -42,6 +42,8 @@ def read_dashboard_trend(
     granularity: str = Query(...),
     limit: int = Query(12, ge=1),
     before: datetime | None = Query(None),
+    anchor: datetime | None = Query(None),
+    auto_fallback: bool = Query(True),
 ):
     normalized_granularity = _normalize_granularity(granularity)
     return get_trend_data(
@@ -49,4 +51,6 @@ def read_dashboard_trend(
         granularity=normalized_granularity,
         limit=limit,
         before=before,
+        anchor=anchor,
+        auto_fallback=auto_fallback,
     )

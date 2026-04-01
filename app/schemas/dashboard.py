@@ -26,3 +26,8 @@ class DashboardTrendResponse(BaseModel):
     data: list[DashboardTrendPoint]
     has_more: bool
     earliest_confirmed_at: datetime | None = None
+    resolved_period_start: datetime
+    resolved_period_end: datetime
+    previous_period_anchor: datetime | None = None
+    next_period_anchor: datetime | None = None
+    used_fallback: bool = False
