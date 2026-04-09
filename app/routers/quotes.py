@@ -11,6 +11,7 @@ from app import crud, schemas
 from app.crud.quote import QuoteValidationError
 from app.database import get_db
 from app.deps.auth import get_current_user
+from app.models.catalog import CatalogItem
 from app.models.user import User
 from app.services.promotion_pricing import PromotionValidationError, get_promotion_runtime_status, validate_promotion_for_quote
 
@@ -40,11 +41,34 @@ def _serialize_quote_for_user(quote: Any, current_user: User) -> dict:
             invalid_message = None
             is_eligible = True
             try:
+                quote_category_values = {
+                    item.catalog_category_snapshot.strip().lower()
+                    for item in quote.items
+                    if getattr(item, "catalog_category_snapshot", None) and item.catalog_category_snapshot.strip()
+                }
+                if not quote_category_values:
+                    catalog_item_ids = list(
+                        dict.fromkeys(
+                            item.catalog_item_id for item in quote.items if getattr(item, "catalog_item_id", None)
+                        )
+                    )
+                    if catalog_item_ids:
+                        catalog_items = (
+                            quote._sa_instance_state.session.query(CatalogItem)
+                            .filter(CatalogItem.id.in_(catalog_item_ids), CatalogItem.deleted_at.is_(None))
+                            .all()
+                        )
+                        quote_category_values = {
+                            item.category.strip().lower()
+                            for item in catalog_items
+                            if item.category and item.category.strip()
+                        }
                 validate_promotion_for_quote(
                     quote._sa_instance_state.session,
                     quote.promotion,
                     quote.items,
                     quote.subtotal,
+                    quote_category_values=quote_category_values,
                 )
             except PromotionValidationError as exc:
                 is_eligible = False

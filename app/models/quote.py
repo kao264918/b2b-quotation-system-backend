@@ -74,6 +74,7 @@ class QuoteItem(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     unit: Mapped[str] = mapped_column(String, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    catalog_category_snapshot: Mapped[str | None] = mapped_column(String, nullable=True)
     
     # 稅務 Snapshot
     tax_category_name: Mapped[str] = mapped_column(String, nullable=False)

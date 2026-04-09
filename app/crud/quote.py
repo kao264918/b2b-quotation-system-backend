@@ -135,8 +135,10 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         db.add(db_obj)
         db.flush()
 
+        catalog_by_id = self._get_catalog_map(db, items_data)
+
         for item in items_data:
-            db_item = QuoteItem(**self._prepare_item_data(db, item), quote_id=db_obj.id)
+            db_item = QuoteItem(**self._prepare_item_data(item, catalog_by_id), quote_id=db_obj.id)
             db.add(db_item)
 
         db.flush()
@@ -396,10 +398,12 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             # Delete existing items
             for item in quote.items:
                 db.delete(item)
-            
+
+            catalog_by_id = self._get_catalog_map(db, items_data)
+
             # Create new items
             for item_data in items_data:
-                db_item = QuoteItem(**self._prepare_item_data(db, item_data), quote_id=quote.id)
+                db_item = QuoteItem(**self._prepare_item_data(item_data, catalog_by_id), quote_id=quote.id)
                 db.add(db_item)
             
             changes["items"] = "updated"
@@ -486,7 +490,21 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             return data.isoformat()
         return data
 
-    def _prepare_item_data(self, db: Session, item_data: dict) -> dict:
+    def _get_catalog_map(self, db: Session, items_data: list[dict]) -> dict[str, CatalogItem]:
+        catalog_item_ids = list(
+            dict.fromkeys(item_data.get("catalog_item_id") for item_data in items_data if item_data.get("catalog_item_id"))
+        )
+        if not catalog_item_ids:
+            return {}
+
+        catalog_items = (
+            db.query(CatalogItem)
+            .filter(CatalogItem.id.in_(catalog_item_ids), CatalogItem.deleted_at.is_(None))
+            .all()
+        )
+        return {item.id: item for item in catalog_items}
+
+    def _prepare_item_data(self, item_data: dict, catalog_by_id: dict[str, CatalogItem]) -> dict:
         data = {**item_data}
         catalog_item_id = data.get("catalog_item_id")
         if not catalog_item_id:
@@ -495,17 +513,14 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
                 "品項需先於品項管理建立後再加入報價。",
             )
 
-        catalog_item = (
-            db.query(CatalogItem)
-            .filter(CatalogItem.id == catalog_item_id, CatalogItem.deleted_at.is_(None))
-            .first()
-        )
+        catalog_item = catalog_by_id.get(catalog_item_id)
         if not catalog_item:
             raise QuoteValidationError("CATALOG_ITEM_NOT_FOUND", "Catalog item not found.")
         if catalog_item.reference_cost is None:
             raise QuoteValidationError("CATALOG_COST_MISSING", "Catalog item cost is missing.")
 
         data["snapshot_cost"] = Decimal(catalog_item.reference_cost)
+        data["catalog_category_snapshot"] = data.get("catalog_category_snapshot") or catalog_item.category
         return data
 
     def _apply_promotion_to_quote(self, db: Session, *, quote: Quote, promotion_id: str | None) -> None:
@@ -516,7 +531,13 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             if not promotion:
                 raise QuoteValidationError("PROMOTION_NOT_FOUND", "Promotion not found.")
             try:
-                validate_promotion_for_quote(db, promotion, quote.items, Decimal(quote.subtotal))
+                validate_promotion_for_quote(
+                    db,
+                    promotion,
+                    quote.items,
+                    Decimal(quote.subtotal),
+                    quote_category_values=self._get_quote_item_category_values(quote.items),
+                )
             except PromotionValidationError as exc:
                 raise QuoteValidationError(exc.code, exc.message)
         amounts = recalculate_quote_amounts_with_promotion(
@@ -546,5 +567,12 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         quote.promotion_value_snapshot = Decimal(quote.promotion.discount_value)
         quote.promotion_scope_snapshot = quote.promotion.scope
         quote.promotion_scope_category_snapshot = quote.promotion.scope_category
+
+    def _get_quote_item_category_values(self, quote_items: List[QuoteItem]) -> set[str]:
+        return {
+            item.catalog_category_snapshot.strip().lower()
+            for item in quote_items
+            if item.catalog_category_snapshot and item.catalog_category_snapshot.strip()
+        }
 
 quote = CRUDQuote(Quote)
