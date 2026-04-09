@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
@@ -25,15 +26,27 @@ def generate_promotion_code(db: Session, now: Optional[datetime] = None) -> str:
     return f"{prefix}{max_seq + 1:03d}"
 
 
+def _is_duplicate_promotion_code_error(exc: IntegrityError) -> bool:
+    message = str(getattr(exc, "orig", exc)).lower()
+    return "promotion_code" in message or "uq_promotions_promotion_code" in message
+
+
 class CRUDPromotion(CRUDBase[Promotion, PromotionCreate, PromotionUpdate]):
     def create(self, db: Session, *, obj_in: PromotionCreate) -> Promotion:
         obj_data = obj_in.model_dump()
-        obj_data["promotion_code"] = generate_promotion_code(db)
-        db_obj = Promotion(**obj_data)
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
-        return db_obj
+        for _ in range(5):
+            try:
+                create_data = {**obj_data, "promotion_code": generate_promotion_code(db)}
+                db_obj = Promotion(**create_data)
+                db.add(db_obj)
+                db.commit()
+                db.refresh(db_obj)
+                return db_obj
+            except IntegrityError as exc:
+                db.rollback()
+                if not _is_duplicate_promotion_code_error(exc):
+                    raise
+        raise ValueError("Failed to generate unique promotion code after multiple attempts.")
 
     def get_multi_filtered(
         self,
