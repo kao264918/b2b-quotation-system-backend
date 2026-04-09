@@ -31,10 +31,12 @@ def test_dashboard_trend_api_contract_and_params(client, monkeypatch):
 
     captured = {}
 
-    def _mock_get_trend_data(db, *, granularity, limit, before):
+    def _mock_get_trend_data(db, *, granularity, limit, before, anchor, auto_fallback):
         captured["granularity"] = granularity
         captured["limit"] = limit
         captured["before"] = before
+        captured["anchor"] = anchor
+        captured["auto_fallback"] = auto_fallback
         return {
             "granularity": granularity,
             "data": [
@@ -53,12 +55,17 @@ def test_dashboard_trend_api_contract_and_params(client, monkeypatch):
             ],
             "has_more": True,
             "earliest_confirmed_at": datetime(2024, 6, 1, tzinfo=timezone.utc),
+            "resolved_period_start": datetime(2024, 6, 1, tzinfo=timezone.utc),
+            "resolved_period_end": datetime(2024, 7, 1, tzinfo=timezone.utc),
+            "previous_period_anchor": datetime(2024, 5, 1, tzinfo=timezone.utc),
+            "next_period_anchor": datetime(2024, 7, 1, tzinfo=timezone.utc),
+            "used_fallback": False,
         }
 
     monkeypatch.setattr(dashboard_router, "get_trend_data", _mock_get_trend_data)
 
     response = client.get(
-        "/api/v1/dashboard/trend?granularity=month_day&limit=12&before=2025-01-01T00:00:00Z"
+        "/api/v1/dashboard/trend?granularity=month_day&limit=12&before=2025-01-01T00:00:00Z&anchor=2024-06-15T00:00:00Z&auto_fallback=false"
     )
     assert response.status_code == 200
     body = response.json()
@@ -68,6 +75,45 @@ def test_dashboard_trend_api_contract_and_params(client, monkeypatch):
     assert captured["granularity"] == "month_day"
     assert captured["limit"] == 12
     assert captured["before"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert captured["anchor"] == datetime(2024, 6, 15, tzinfo=timezone.utc)
+    assert captured["auto_fallback"] is False
+    assert body["resolved_period_start"] == "2024-06-01T00:00:00Z"
+    assert body["previous_period_anchor"] == "2024-05-01T00:00:00Z"
+    assert body["used_fallback"] is False
+
+
+def test_dashboard_trend_api_contract_forwards_anchor_and_auto_fallback(client, monkeypatch):
+    from app.routers import dashboard as dashboard_router
+
+    captured = {}
+
+    def _mock_get_trend_data(db, *, granularity, limit, before, anchor, auto_fallback):
+        captured["granularity"] = granularity
+        captured["limit"] = limit
+        captured["before"] = before
+        captured["anchor"] = anchor
+        captured["auto_fallback"] = auto_fallback
+        return {
+            "granularity": granularity,
+            "data": [],
+            "has_more": False,
+            "earliest_confirmed_at": None,
+            "resolved_period_start": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "resolved_period_end": datetime(2026, 4, 1, tzinfo=timezone.utc),
+            "previous_period_anchor": datetime(2025, 10, 1, tzinfo=timezone.utc),
+            "next_period_anchor": datetime(2026, 4, 1, tzinfo=timezone.utc),
+            "used_fallback": True,
+        }
+
+    monkeypatch.setattr(dashboard_router, "get_trend_data", _mock_get_trend_data)
+
+    response = client.get(
+        "/api/v1/dashboard/trend?granularity=quarter_week&limit=12&anchor=2026-03-15T00:00:00Z&auto_fallback=false"
+    )
+
+    assert response.status_code == 200
+    assert captured["anchor"] == datetime(2026, 3, 15, tzinfo=timezone.utc)
+    assert captured["auto_fallback"] is False
 
 
 def test_dashboard_trend_api_validation(client):
@@ -86,13 +132,18 @@ def test_dashboard_trend_api_accepts_legacy_granularity_values(client, monkeypat
 
     captured = {}
 
-    def _mock_get_trend_data(db, *, granularity, limit, before):
+    def _mock_get_trend_data(db, *, granularity, limit, before, anchor, auto_fallback):
         captured["granularity"] = granularity
         return {
             "granularity": granularity,
             "data": [],
             "has_more": False,
             "earliest_confirmed_at": None,
+            "resolved_period_start": datetime(2024, 1, 1, tzinfo=timezone.utc),
+            "resolved_period_end": datetime(2024, 2, 1, tzinfo=timezone.utc),
+            "previous_period_anchor": None,
+            "next_period_anchor": None,
+            "used_fallback": False,
         }
 
     monkeypatch.setattr(dashboard_router, "get_trend_data", _mock_get_trend_data)

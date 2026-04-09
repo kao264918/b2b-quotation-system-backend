@@ -1,6 +1,7 @@
 from typing import Any, List, Literal
 import io
 import math
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -97,6 +98,9 @@ def read_quotes(
     sort_order: Literal["asc", "desc"] = "desc",
     current_user: User = Depends(get_current_user),
 ) -> Any:
+    total_start = time.perf_counter()
+
+    query_start = time.perf_counter()
     quotes = crud.quote.get_list_page(
         db,
         skip=skip,
@@ -105,11 +109,22 @@ def read_quotes(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    query_ms = round((time.perf_counter() - query_start) * 1000, 2)
+
+    count_start = time.perf_counter()
     total = crud.quote.count_list(db, search=search)
+    count_ms = round((time.perf_counter() - count_start) * 1000, 2)
+
     page = (skip // limit) + 1 if limit > 0 else 1
     total_pages = math.ceil(total / limit) if limit > 0 and total > 0 else 1
+
+    serialize_start = time.perf_counter()
+    items = [_serialize_quote_list_item_for_user(quote, current_user) for quote in quotes]
+    serialize_ms = round((time.perf_counter() - serialize_start) * 1000, 2)
+    total_ms = round((time.perf_counter() - total_start) * 1000, 2)
+
     return schemas.QuoteListResponse(
-        items=[_serialize_quote_list_item_for_user(quote, current_user) for quote in quotes],
+        items=items,
         total=total,
         page=page,
         page_size=limit,

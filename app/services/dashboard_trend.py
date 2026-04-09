@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.quote import Quote
@@ -55,6 +56,10 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=TAIPEI).astimezone(UTC)
     return value.astimezone(UTC)
+
+
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
 
 
 def _start_of_month_local(value: datetime) -> datetime:
@@ -152,24 +157,88 @@ def _yoy_bucket_start(bucket_start: datetime, granularity: TrendGranularity) -> 
     return _shift_year(bucket_start, -1)
 
 
-def _period_bounds_local(now: datetime, granularity: TrendGranularity) -> tuple[datetime, datetime, datetime, datetime]:
+def _period_start_local(value: datetime, granularity: TrendGranularity) -> datetime:
     if granularity == "month_day":
-        current_start = _start_of_month_local(now)
-        current_end = _start_of_next_month_local(now)
-        comparison_start = _shift_year(current_start, -1)
-        comparison_end = _shift_year(current_end, -1)
-        return current_start, current_end, comparison_start, comparison_end
+        return _start_of_month_local(value)
     if granularity == "quarter_week":
-        current_start = _start_of_quarter_local(now)
-        current_end = _start_of_next_quarter_local(now)
-        comparison_start = _shift_year(current_start, -1)
-        comparison_end = _shift_year(current_end, -1)
-        return current_start, current_end, comparison_start, comparison_end
-    current_start = _start_of_year_local(now)
-    current_end = _start_of_next_year_local(now)
+        return _start_of_quarter_local(value)
+    return _start_of_year_local(value)
+
+
+def _next_period_start_local(period_start: datetime, granularity: TrendGranularity) -> datetime:
+    if granularity == "month_day":
+        return _start_of_next_month_local(period_start)
+    if granularity == "quarter_week":
+        return _start_of_next_quarter_local(period_start)
+    return _start_of_next_year_local(period_start)
+
+
+def _period_bounds_local(anchor: datetime, granularity: TrendGranularity) -> tuple[datetime, datetime, datetime, datetime]:
+    current_start = _period_start_local(anchor, granularity)
+    current_end = _next_period_start_local(current_start, granularity)
     comparison_start = _shift_year(current_start, -1)
     comparison_end = _shift_year(current_end, -1)
     return current_start, current_end, comparison_start, comparison_end
+
+
+def _latest_confirmed_at(db: Session) -> datetime | None:
+    return db.query(func.max(Quote.confirmed_at)).filter(
+        Quote.confirmed_at.is_not(None),
+        Quote.status.in_(["confirmed", "closed"]),
+    ).scalar()
+
+
+def _period_has_data(
+    db: Session,
+    *,
+    period_start: datetime,
+    period_end: datetime,
+) -> bool:
+    return (
+        db.query(Quote.id)
+        .filter(
+            Quote.confirmed_at.is_not(None),
+            Quote.status.in_(["confirmed", "closed"]),
+            Quote.confirmed_at >= _to_utc(period_start),
+            Quote.confirmed_at < _to_utc(period_end),
+        )
+        .first()
+        is not None
+    )
+
+
+def _resolve_anchor(
+    db: Session,
+    *,
+    granularity: TrendGranularity,
+    anchor: datetime | None,
+    auto_fallback: bool,
+) -> tuple[datetime, bool]:
+    if anchor is not None:
+        return _period_start_local(anchor, granularity), False
+
+    natural_anchor = _period_start_local(_now_utc(), granularity)
+    natural_end = _next_period_start_local(natural_anchor, granularity)
+    if _period_has_data(db, period_start=natural_anchor, period_end=natural_end):
+        return natural_anchor, False
+
+    if not auto_fallback:
+        return natural_anchor, False
+
+    latest_confirmed_at = _latest_confirmed_at(db)
+    if latest_confirmed_at is None:
+        return natural_anchor, False
+
+    fallback_anchor = _period_start_local(latest_confirmed_at, granularity)
+    return fallback_anchor, fallback_anchor != natural_anchor
+
+
+def _period_nav(anchor: datetime, granularity: TrendGranularity) -> tuple[datetime, datetime]:
+    if granularity == "month_day":
+        return _shift_month(anchor, -1), _shift_month(anchor, 1)
+    if granularity == "quarter_week":
+        return _shift_month(anchor, -3), _shift_month(anchor, 3)
+    return _shift_year(anchor, -1), _shift_year(anchor, 1)
 
 
 def _aggregate_quotes(quotes: list[Quote], granularity: TrendGranularity) -> dict[datetime, PeriodAggregate]:
@@ -201,15 +270,26 @@ def get_trend_data(
     granularity: TrendGranularity,
     limit: int,
     before: datetime | None,
+    anchor: datetime | None,
+    auto_fallback: bool,
 ) -> dict:
     safe_limit = max(1, min(limit, 12))
     safe_before = _as_utc(before) if before is not None else None
-    now = datetime.now(UTC)
-    current_start_local, current_end_local, comparison_start_local, comparison_end_local = _period_bounds_local(now, granularity)
+    resolved_anchor_local, used_fallback = _resolve_anchor(
+        db,
+        granularity=granularity,
+        anchor=anchor,
+        auto_fallback=auto_fallback,
+    )
+    current_start_local, current_end_local, comparison_start_local, comparison_end_local = _period_bounds_local(
+        resolved_anchor_local,
+        granularity,
+    )
     current_start = _to_utc(current_start_local)
     current_end = _to_utc(current_end_local)
     comparison_start = _to_utc(comparison_start_local)
     comparison_end = _to_utc(comparison_end_local)
+    previous_period_anchor, next_period_anchor = _period_nav(resolved_anchor_local, granularity)
 
     base_query = db.query(Quote).filter(
         Quote.confirmed_at.is_not(None),
@@ -264,4 +344,9 @@ def get_trend_data(
         "data": data,
         "has_more": has_more,
         "earliest_confirmed_at": earliest_confirmed_at,
+        "resolved_period_start": current_start,
+        "resolved_period_end": current_end,
+        "previous_period_anchor": _to_utc(previous_period_anchor),
+        "next_period_anchor": _to_utc(next_period_anchor),
+        "used_fallback": used_fallback,
     }
