@@ -87,5 +87,17 @@ class CatalogItemInternalListResponse(BaseModel):
     items: List[CatalogItemInternal]
     meta: CatalogItemMeta
 
+
+class CatalogItemResolveRequest(BaseModel):
+    ids: List[str]
+
+
+class CatalogItemResolveItem(BaseModel):
+    id: str
+    name: str
+    type: Literal["product", "service", "output"]
+    unit: str
+    category: Optional[str] = None
+
 # Backward-compatible alias
 CatalogItem = CatalogItemPublic

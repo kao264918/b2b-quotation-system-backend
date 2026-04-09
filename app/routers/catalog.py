@@ -153,6 +153,25 @@ def read_catalog_item(
     return item
 
 
+@router.post("/resolve", response_model=list[schemas.CatalogItemResolveItem])
+def resolve_catalog_items(
+    *,
+    db: Session = Depends(get_db),
+    payload: schemas.CatalogItemResolveRequest,
+) -> Any:
+    items = crud.catalog.get_multi_by_ids(db, ids=payload.ids)
+    return [
+        schemas.CatalogItemResolveItem(
+            id=item.id,
+            name=item.name,
+            type=item.type,
+            unit=item.unit,
+            category=item.category,
+        )
+        for item in items
+    ]
+
+
 @router.put("/{id}", response_model=schemas.CatalogItemInternal)
 def update_catalog_item(
     *,

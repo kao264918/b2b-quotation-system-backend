@@ -55,30 +55,62 @@ def calculate_promotion_discount(subtotal: Decimal, promotion_type: str, discoun
 def _normalize_quote_item_category_values(
     db: Session,
     quote_items: Iterable[object],
+    *,
+    quote_category_values: Optional[set[str]] = None,
 ) -> set[str]:
+    if quote_category_values is not None:
+        return {
+            value.strip().lower()
+            for value in quote_category_values
+            if isinstance(value, str) and value.strip()
+        }
+
+    catalog_item_ids: list[str] = []
     category_values: set[str] = set()
     for item in quote_items:
+        snapshot_category = getattr(item, "catalog_category_snapshot", None)
+        if snapshot_category:
+            normalized = str(snapshot_category).strip().lower()
+            if normalized:
+                category_values.add(normalized)
+                continue
         catalog_item_id = getattr(item, "catalog_item_id", None)
         if not catalog_item_id:
             continue
-        catalog_item = (
-            db.query(CatalogItem)
-            .filter(CatalogItem.id == catalog_item_id, CatalogItem.deleted_at.is_(None))
-            .first()
-        )
-        if catalog_item and catalog_item.category:
+        catalog_item_ids.append(catalog_item_id)
+
+    if not catalog_item_ids:
+        return category_values
+
+    catalog_items = (
+        db.query(CatalogItem)
+        .filter(CatalogItem.id.in_(list(dict.fromkeys(catalog_item_ids))), CatalogItem.deleted_at.is_(None))
+        .all()
+    )
+    for catalog_item in catalog_items:
+        if catalog_item.category:
             category_values.add(str(catalog_item.category).strip().lower())
     return category_values
 
 
-def quote_matches_promotion_scope(db: Session, quote_items: Iterable[object], promotion: Promotion) -> bool:
+def quote_matches_promotion_scope(
+    db: Session,
+    quote_items: Iterable[object],
+    promotion: Promotion,
+    *,
+    quote_category_values: Optional[set[str]] = None,
+) -> bool:
     if promotion.scope == "all_products":
         return True
     if promotion.scope != "category":
         return False
     if not promotion.scope_category:
         return False
-    return promotion.scope_category.strip().lower() in _normalize_quote_item_category_values(db, quote_items)
+    return promotion.scope_category.strip().lower() in _normalize_quote_item_category_values(
+        db,
+        quote_items,
+        quote_category_values=quote_category_values,
+    )
 
 
 def validate_promotion_for_quote(
@@ -87,6 +119,8 @@ def validate_promotion_for_quote(
     quote_items: Iterable[object],
     subtotal: Decimal,
     now: Optional[datetime] = None,
+    *,
+    quote_category_values: Optional[set[str]] = None,
 ) -> Promotion:
     status = get_promotion_runtime_status(promotion, now=now)
     if status == "disabled":
@@ -98,7 +132,12 @@ def validate_promotion_for_quote(
     subtotal = quantize_money(subtotal)
     if subtotal < quantize_money(promotion.minimum_order_amount):
         raise PromotionValidationError("PROMOTION_MIN_ORDER_NOT_MET", "Promotion minimum order amount is not met.")
-    if not quote_matches_promotion_scope(db, quote_items, promotion):
+    if not quote_matches_promotion_scope(
+        db,
+        quote_items,
+        promotion,
+        quote_category_values=quote_category_values,
+    ):
         raise PromotionValidationError("PROMOTION_SCOPE_NOT_MATCHED", "Promotion scope does not match quote items.")
     return promotion
 
