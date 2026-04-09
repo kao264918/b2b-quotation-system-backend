@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.exc import OperationalError, ProgrammingError, TimeoutError as SQLAlchemyTimeoutError
 
 from app.config import settings
 from app.database import SessionLocal, engine
@@ -59,14 +59,37 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    if isinstance(exc, SQLAlchemyTimeoutError):
+        logger.error(
+            "Database pool timeout on %s %s",
+            request.method,
+            request.url.path,
+            extra={
+                "extra_fields": {
+                    "error_code": "DB_POOL_TIMEOUT",
+                    "request_id": get_request_id(),
+                }
+            },
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": "Database is busy. Please retry shortly.",
+                "code": "DB_POOL_TIMEOUT",
+            },
+            headers={"Retry-After": "5"},
+        )
+
     if isinstance(exc, (ProgrammingError, OperationalError)):
         error_text = str(getattr(exc, "orig", exc)).lower()
         if any(keyword in error_text for keyword in ("undefined table", "does not exist", "undefined column", "no such table", "no such column")):
+            logger.exception("Database schema mismatch on %s %s", request.method, request.url.path)
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 content={"detail": "Database schema mismatch. Run `alembic upgrade head` and restart the backend."},
             )
+
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},
