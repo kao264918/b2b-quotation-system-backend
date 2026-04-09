@@ -29,6 +29,7 @@ class QuoteItemBase(BaseModel):
 class QuoteItemCreate(QuoteItemBase):
     rfq_item_id: Optional[str] = None
     catalog_item_id: Optional[str] = None
+    catalog_category_snapshot: Optional[str] = None
 
     @field_validator("quantity")
     @classmethod
@@ -42,6 +43,7 @@ class QuoteItem(QuoteItemBase):
     quote_id: str
     rfq_item_id: Optional[str] = None
     catalog_item_id: Optional[str] = None
+    catalog_category_snapshot: Optional[str] = None
     snapshot_cost: Optional[Decimal] = None
     source_rfq_info: Optional[dict] = None
     

@@ -9,6 +9,8 @@ from .catalog import (
     CatalogItemListResponse,
     CatalogItemInternalListResponse,
     CatalogItemMeta,
+    CatalogItemResolveRequest,
+    CatalogItemResolveItem,
 )
 from .tax_category import TaxCategory, TaxCategoryCreate, TaxCategoryUpdate
 from .unit import Unit, UnitCreate, UnitUpdate
