@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Any, List, Literal, Optional
 
 from sqlalchemy import asc, case, desc, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, load_only, noload
 
 from app.crud.base import CRUDBase
@@ -100,54 +101,50 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         Quote.updated_at,
     )
 
-    def create(self, db: Session, *, obj_in: QuoteCreate) -> Quote:
-        obj_data = obj_in.model_dump()
-        items_data = obj_data.pop("items", [])
-        
-        # Auto-generate quote_number with monthly sequence
-        if "quote_number" not in obj_data or not obj_data.get("quote_number"):
-            date_prefix = datetime.now().strftime("%y%m")
-            prefix = f"QUO-{date_prefix}-"
-            
-            # Query all existing quote numbers for this month to find the next sequence
-            # This is safer than max() because of mixed legacy ID formats (e.g. hex suffixes)
-            existing_numbers = db.query(Quote.quote_number).filter(
-                Quote.quote_number.like(f"{prefix}%")
-            ).all()
-            
-            max_seq = 0
-            for (q_num,) in existing_numbers:
-                if not q_num: continue
-                try:
-                    # Extract suffix after last hyphen
-                    parts = q_num.split("-")
-                    if len(parts) >= 3:
-                        suffix = parts[-1]
-                        # Only consider numeric suffixes to avoid legacy hex IDs
-                        if suffix.isdigit():
-                            seq = int(suffix)
-                            if seq > max_seq:
-                                max_seq = seq
-                except (ValueError, IndexError):
-                    continue
-            
-            next_seq = max_seq + 1
-            obj_data["quote_number"] = f"{prefix}{next_seq:03d}"
-        
+    def _generate_quote_number(self, db: Session) -> str:
+        date_prefix = datetime.now().strftime("%y%m")
+        prefix = f"QUO-{date_prefix}-"
+
+        existing_numbers = db.query(Quote.quote_number).filter(
+            Quote.quote_number.like(f"{prefix}%")
+        ).all()
+
+        max_seq = 0
+        for (q_num,) in existing_numbers:
+            if not q_num:
+                continue
+            try:
+                parts = q_num.split("-")
+                if len(parts) >= 3:
+                    suffix = parts[-1]
+                    if suffix.isdigit():
+                        seq = int(suffix)
+                        if seq > max_seq:
+                            max_seq = seq
+            except (ValueError, IndexError):
+                continue
+
+        return f"{prefix}{max_seq + 1:03d}"
+
+    def _is_duplicate_quote_number_error(self, exc: IntegrityError) -> bool:
+        message = str(getattr(exc, "orig", exc)).lower()
+        return "quote_number" in message
+
+    def _build_quote(self, db: Session, *, obj_data: dict, items_data: list[dict]) -> Quote:
         db_obj = Quote(**obj_data)
         db.add(db_obj)
         db.flush()
-        
+
+        catalog_by_id = self._get_catalog_map(db, items_data)
+
         for item in items_data:
-            db_item = QuoteItem(**self._prepare_item_data(db, item), quote_id=db_obj.id)
+            db_item = QuoteItem(**self._prepare_item_data(item, catalog_by_id), quote_id=db_obj.id)
             db.add(db_item)
 
         db.flush()
         db.refresh(db_obj)
         self._apply_promotion_to_quote(db, quote=db_obj, promotion_id=obj_data.get("promotion_id"))
         recalculate_quote_cost_fields(db_obj)
-        
-        # Create audit log
         self._create_audit_log(
             db,
             db_obj.id,
@@ -155,10 +152,25 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             AUDIT_CATEGORIES["create"],
             {"version": 1, "promotion": _promotion_snapshot_payload(db_obj)},
         )
-            
         db.commit()
         db.refresh(db_obj)
         return db_obj
+
+    def create(self, db: Session, *, obj_in: QuoteCreate) -> Quote:
+        base_data = obj_in.model_dump()
+        items_data = base_data.pop("items", [])
+
+        for _ in range(5):
+            obj_data = dict(base_data)
+            if "quote_number" not in obj_data or not obj_data.get("quote_number"):
+                obj_data["quote_number"] = self._generate_quote_number(db)
+            try:
+                return self._build_quote(db, obj_data=obj_data, items_data=items_data)
+            except IntegrityError as exc:
+                db.rollback()
+                if not self._is_duplicate_quote_number_error(exc):
+                    raise
+        raise ValueError("Failed to generate unique quote number after multiple attempts.")
 
     def get_multi(
         self,
@@ -386,10 +398,12 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             # Delete existing items
             for item in quote.items:
                 db.delete(item)
-            
+
+            catalog_by_id = self._get_catalog_map(db, items_data)
+
             # Create new items
             for item_data in items_data:
-                db_item = QuoteItem(**self._prepare_item_data(db, item_data), quote_id=quote.id)
+                db_item = QuoteItem(**self._prepare_item_data(item_data, catalog_by_id), quote_id=quote.id)
                 db.add(db_item)
             
             changes["items"] = "updated"
@@ -476,7 +490,21 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             return data.isoformat()
         return data
 
-    def _prepare_item_data(self, db: Session, item_data: dict) -> dict:
+    def _get_catalog_map(self, db: Session, items_data: list[dict]) -> dict[str, CatalogItem]:
+        catalog_item_ids = list(
+            dict.fromkeys(item_data.get("catalog_item_id") for item_data in items_data if item_data.get("catalog_item_id"))
+        )
+        if not catalog_item_ids:
+            return {}
+
+        catalog_items = (
+            db.query(CatalogItem)
+            .filter(CatalogItem.id.in_(catalog_item_ids), CatalogItem.deleted_at.is_(None))
+            .all()
+        )
+        return {item.id: item for item in catalog_items}
+
+    def _prepare_item_data(self, item_data: dict, catalog_by_id: dict[str, CatalogItem]) -> dict:
         data = {**item_data}
         catalog_item_id = data.get("catalog_item_id")
         if not catalog_item_id:
@@ -485,17 +513,14 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
                 "品項需先於品項管理建立後再加入報價。",
             )
 
-        catalog_item = (
-            db.query(CatalogItem)
-            .filter(CatalogItem.id == catalog_item_id, CatalogItem.deleted_at.is_(None))
-            .first()
-        )
+        catalog_item = catalog_by_id.get(catalog_item_id)
         if not catalog_item:
             raise QuoteValidationError("CATALOG_ITEM_NOT_FOUND", "Catalog item not found.")
         if catalog_item.reference_cost is None:
             raise QuoteValidationError("CATALOG_COST_MISSING", "Catalog item cost is missing.")
 
         data["snapshot_cost"] = Decimal(catalog_item.reference_cost)
+        data["catalog_category_snapshot"] = data.get("catalog_category_snapshot") or catalog_item.category
         return data
 
     def _apply_promotion_to_quote(self, db: Session, *, quote: Quote, promotion_id: str | None) -> None:
@@ -506,7 +531,13 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
             if not promotion:
                 raise QuoteValidationError("PROMOTION_NOT_FOUND", "Promotion not found.")
             try:
-                validate_promotion_for_quote(db, promotion, quote.items, Decimal(quote.subtotal))
+                validate_promotion_for_quote(
+                    db,
+                    promotion,
+                    quote.items,
+                    Decimal(quote.subtotal),
+                    quote_category_values=self._get_quote_item_category_values(quote.items),
+                )
             except PromotionValidationError as exc:
                 raise QuoteValidationError(exc.code, exc.message)
         amounts = recalculate_quote_amounts_with_promotion(
@@ -536,5 +567,12 @@ class CRUDQuote(CRUDBase[Quote, QuoteCreate, QuoteUpdate]):
         quote.promotion_value_snapshot = Decimal(quote.promotion.discount_value)
         quote.promotion_scope_snapshot = quote.promotion.scope
         quote.promotion_scope_category_snapshot = quote.promotion.scope_category
+
+    def _get_quote_item_category_values(self, quote_items: List[QuoteItem]) -> set[str]:
+        return {
+            item.catalog_category_snapshot.strip().lower()
+            for item in quote_items
+            if item.catalog_category_snapshot and item.catalog_category_snapshot.strip()
+        }
 
 quote = CRUDQuote(Quote)

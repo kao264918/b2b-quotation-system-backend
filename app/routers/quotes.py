@@ -8,15 +8,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
-from app.core.logging import get_logger
 from app.crud.quote import QuoteValidationError
 from app.database import get_db
 from app.deps.auth import get_current_user
+from app.models.catalog import CatalogItem
 from app.models.user import User
 from app.services.promotion_pricing import PromotionValidationError, get_promotion_runtime_status, validate_promotion_for_quote
 
 router = APIRouter()
-logger = get_logger(__name__)
 
 
 def can_view_internal_cost(user: User) -> bool:
@@ -42,11 +41,34 @@ def _serialize_quote_for_user(quote: Any, current_user: User) -> dict:
             invalid_message = None
             is_eligible = True
             try:
+                quote_category_values = {
+                    item.catalog_category_snapshot.strip().lower()
+                    for item in quote.items
+                    if getattr(item, "catalog_category_snapshot", None) and item.catalog_category_snapshot.strip()
+                }
+                if not quote_category_values:
+                    catalog_item_ids = list(
+                        dict.fromkeys(
+                            item.catalog_item_id for item in quote.items if getattr(item, "catalog_item_id", None)
+                        )
+                    )
+                    if catalog_item_ids:
+                        catalog_items = (
+                            quote._sa_instance_state.session.query(CatalogItem)
+                            .filter(CatalogItem.id.in_(catalog_item_ids), CatalogItem.deleted_at.is_(None))
+                            .all()
+                        )
+                        quote_category_values = {
+                            item.category.strip().lower()
+                            for item in catalog_items
+                            if item.category and item.category.strip()
+                        }
                 validate_promotion_for_quote(
                     quote._sa_instance_state.session,
                     quote.promotion,
                     quote.items,
                     quote.subtotal,
+                    quote_category_values=quote_category_values,
                 )
             except PromotionValidationError as exc:
                 is_eligible = False
@@ -124,29 +146,6 @@ def read_quotes(
     items = [_serialize_quote_list_item_for_user(quote, current_user) for quote in quotes]
     serialize_ms = round((time.perf_counter() - serialize_start) * 1000, 2)
     total_ms = round((time.perf_counter() - total_start) * 1000, 2)
-
-    logger.info(
-        "GET /api/v1/quotes status=200 duration_ms=%s query_ms=%s count_ms=%s serialize_ms=%s",
-        total_ms,
-        query_ms,
-        count_ms,
-        serialize_ms,
-        extra={
-            "extra_fields": {
-                "path": "/api/v1/quotes",
-                "skip": skip,
-                "limit": limit,
-                "search": search,
-                "sort_by": sort_by,
-                "sort_order": sort_order,
-                "result_count": len(items),
-                "duration_ms": total_ms,
-                "query_ms": query_ms,
-                "count_ms": count_ms,
-                "serialize_ms": serialize_ms,
-            }
-        },
-    )
 
     return schemas.QuoteListResponse(
         items=items,

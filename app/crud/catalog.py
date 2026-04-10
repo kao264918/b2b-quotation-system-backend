@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from datetime import datetime
@@ -213,6 +213,16 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
             db.query(self.model)
             .filter(and_(self.model.id == id, self.model.deleted_at.is_(None)))
             .first()
+        )
+
+    def get_multi_by_ids(self, db: Session, *, ids: Iterable[str]) -> List[CatalogItem]:
+        unique_ids = list(dict.fromkeys(item_id for item_id in ids if item_id))
+        if not unique_ids:
+            return []
+        return (
+            db.query(self.model)
+            .filter(self.model.id.in_(unique_ids), self.model.deleted_at.is_(None))
+            .all()
         )
 
 

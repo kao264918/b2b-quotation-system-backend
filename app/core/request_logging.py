@@ -8,6 +8,7 @@ from starlette.requests import Request
 
 from app.core.logging import get_logger
 from app.core.request_id import get_request_id
+from app.config import settings
 
 logger = get_logger(__name__)
 
@@ -32,7 +33,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         duration_ms_rounded = round(duration_ms, 2)
         response.headers["X-Response-Time"] = f"{duration_ms_rounded}ms"
         
-        logger.info(
+        log_method = logger.info
+        if response.status_code < 400 and duration_ms_rounded < settings.REQUEST_LOG_SLOW_MS:
+            log_method = logger.debug
+
+        log_method(
             f"{request.method} {request.url.path} -> {response.status_code} duration_ms={duration_ms_rounded}",
             extra={
                 "extra_fields": {
