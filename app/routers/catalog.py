@@ -137,6 +137,30 @@ def create_catalog_item(
         raise HTTPException(status_code=409, detail=str(e))
 
 
+@router.post("/resolve", response_model=list[schemas.CatalogItemResolveItem])
+def resolve_catalog_items(
+    *,
+    db: Session = Depends(get_db),
+    request: schemas.CatalogItemResolveRequest,
+) -> Any:
+    """
+    Batch resolve lightweight catalog metadata for quote/rfq editing flows.
+    Returns only the fields needed by the frontend to avoid N detail calls.
+    """
+    unique_ids = list(dict.fromkeys(request.ids))
+    if not unique_ids:
+        return []
+
+    items = crud.catalog.get_multi_by_ids(db, ids=unique_ids)
+    item_map = {item.id: item for item in items}
+
+    return [
+        schemas.CatalogItemResolveItem.model_validate(item_map[item_id])
+        for item_id in unique_ids
+        if item_id in item_map
+    ]
+
+
 @router.get("/{id}", response_model=schemas.CatalogItemPublic)
 def read_catalog_item(
     *,

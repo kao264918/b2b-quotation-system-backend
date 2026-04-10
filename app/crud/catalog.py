@@ -1,6 +1,6 @@
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_
 from datetime import datetime
 import math
 
@@ -112,6 +112,18 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
 
         return items, total_count
 
+    def get_multi_by_ids(self, db: Session, *, ids: List[str]) -> List[CatalogItem]:
+        if not ids:
+            return []
+        return (
+            db.query(self.model)
+            .filter(
+                self.model.id.in_(ids),
+                self.model.deleted_at.is_(None),
+            )
+            .all()
+        )
+
     def create_with_item_no(self, db: Session, *, obj_in: CatalogItemCreate) -> CatalogItem:
         """
         Create catalog item with auto-generated item_no.
@@ -205,4 +217,3 @@ class CRUDCatalogItem(CRUDBase[CatalogItem, CatalogItemCreate, CatalogItemUpdate
 
 
 catalog = CRUDCatalogItem(CatalogItem)
-
