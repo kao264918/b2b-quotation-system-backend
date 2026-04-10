@@ -58,8 +58,12 @@ def _seed_quote(
     confirmed_at: datetime | None,
     subtotal: str,
     total_cost: str,
+    promotion_discount_amount: str = "0",
     status: str = "confirmed",
 ) -> None:
+    subtotal_decimal = Decimal(subtotal)
+    promotion_discount_decimal = Decimal(promotion_discount_amount)
+    revenue_excl_tax = subtotal_decimal - promotion_discount_decimal
     quote = Quote(
         id=quote_id,
         quote_number=f"QUO-{quote_id}",
@@ -68,12 +72,13 @@ def _seed_quote(
         title=quote_id,
         status=status,
         tax_setting="taxable_5",
-        subtotal=Decimal(subtotal),
+        subtotal=subtotal_decimal,
+        promotion_discount_amount=promotion_discount_decimal,
         tax_total=Decimal("0"),
-        total=Decimal(subtotal),
+        total=revenue_excl_tax,
         cost_status="ok",
         total_cost=Decimal(total_cost),
-        gross_profit_amount=Decimal(subtotal) - Decimal(total_cost),
+        gross_profit_amount=revenue_excl_tax - Decimal(total_cost),
         gross_profit_rate=Decimal("0"),
         confirmed_at=confirmed_at,
     )
@@ -189,6 +194,29 @@ def test_closed_quotes_are_included_but_discarded_quotes_are_excluded(db_session
 
     assert result["data"][0]["revenue"] == Decimal("1500.00")
     assert result["data"][0]["cost"] == Decimal("900.00")
+
+
+def test_month_day_revenue_and_margin_use_discounted_revenue(db_session: Session):
+    now = datetime.now(UTC)
+    month_start = _start_of_month(now)
+    current_day = month_start + timedelta(days=4)
+
+    _seed_quote(
+        db_session,
+        quote_id="discounted-quote",
+        confirmed_at=current_day.astimezone(UTC),
+        subtotal="1000",
+        promotion_discount_amount="125",
+        total_cost="500",
+    )
+    db_session.commit()
+
+    result = get_trend_data(db_session, granularity="month_day", limit=12, before=None, anchor=None, auto_fallback=True)
+
+    current_bucket = result["data"][0]
+    assert current_bucket["revenue"] == Decimal("875.00")
+    assert current_bucket["cost"] == Decimal("500.00")
+    assert current_bucket["margin_rate"] == Decimal("42.86")
 
 
 def test_month_day_pagination_with_before(db_session: Session):

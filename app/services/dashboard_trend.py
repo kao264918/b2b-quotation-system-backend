@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.quote import Quote
+from app.services.quote_costs import calculate_quote_revenue_excl_tax
 
 TrendGranularity = Literal["month_day", "quarter_week", "year_month"]
 
@@ -249,7 +250,7 @@ def _aggregate_quotes(quotes: list[Quote], granularity: TrendGranularity) -> dic
             continue
         bucket_start_local = _bucket_start_local(confirmed_at, granularity)
         entry = buckets.setdefault(bucket_start_local, {"revenue": Decimal("0"), "cost": Decimal("0")})
-        entry["revenue"] += _to_decimal(getattr(quote, "subtotal", 0))
+        entry["revenue"] += calculate_quote_revenue_excl_tax(quote)
         entry["cost"] += _to_decimal(getattr(quote, "total_cost", 0))
 
     return {
