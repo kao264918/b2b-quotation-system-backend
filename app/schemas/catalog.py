@@ -98,6 +98,10 @@ class CatalogItemResolveItem(BaseModel):
     type: Literal["product", "service", "output"]
     unit: str
     category: Optional[str] = None
+    default_price: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 # Backward-compatible alias
 CatalogItem = CatalogItemPublic
